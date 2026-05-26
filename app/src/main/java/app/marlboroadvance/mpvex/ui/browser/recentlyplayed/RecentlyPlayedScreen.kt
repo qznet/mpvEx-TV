@@ -1,5 +1,7 @@
 package app.marlboroadvance.mpvex.ui.browser.recentlyplayed
 
+import androidx.compose.ui.res.stringResource
+import app.marlboroadvance.mpvex.R
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -187,7 +189,7 @@ object RecentlyPlayedScreen : Screen {
     Scaffold(
         topBar = {
           BrowserTopBar(
-            title = "Recently Played",
+            title = stringResource(R.string.recently_played),
             isInSelectionMode = selectionManager.isInSelectionMode,
             selectedCount = selectionManager.selectedCount,
             totalCount = recentItems.size,
@@ -221,7 +223,7 @@ object RecentlyPlayedScreen : Screen {
                   TooltipAnchorPosition.Above
                 }
               ),
-              tooltip = { PlainTooltip { Text("Toggle menu") } },
+              tooltip = { PlainTooltip { Text(stringResource(R.string.toggle_menu)) } },
               state = rememberTooltipState(),
             ) {
               ToggleFloatingActionButton(
@@ -253,7 +255,7 @@ object RecentlyPlayedScreen : Screen {
               filePicker.launch(arrayOf("video/*"))
             },
             icon = { Icon(Icons.Filled.FileOpen, contentDescription = null) },
-            text = { Text(text = "Open File") },
+            text = { Text(text = stringResource(R.string.open_file)) },
           )
 
           FloatingActionButtonMenuItem(
@@ -268,7 +270,7 @@ object RecentlyPlayedScreen : Screen {
               }
             },
             icon = { Icon(Icons.Filled.History, contentDescription = null) },
-            text = { Text(text = "Recently Played") },
+            text = { Text(text = stringResource(R.string.recently_played)) },
           )
 
           FloatingActionButtonMenuItem(
@@ -277,7 +279,7 @@ object RecentlyPlayedScreen : Screen {
               showLinkDialog.value = true
             },
             icon = { Icon(Icons.Filled.Link, contentDescription = null) },
-            text = { Text(text = "Open Link") },
+            text = { Text(text = stringResource(R.string.open_link)) },
           )
         }
       },
@@ -292,8 +294,8 @@ object RecentlyPlayedScreen : Screen {
           ) {
             EmptyState(
               icon = Icons.Filled.History,
-              title = "Recently Played is disabled",
-              message = "Enable it in Advanced Settings to track your playback history",
+              title = stringResource(R.string.recently_played_disabled_title),
+              message = stringResource(R.string.recently_played_disabled_message),
             )
           }
         }
@@ -321,8 +323,8 @@ object RecentlyPlayedScreen : Screen {
           ) {
             EmptyState(
               icon = Icons.Filled.History,
-              title = "No recently played videos",
-              message = "Videos you play will appear here",
+              title = stringResource(R.string.recently_played_empty_title),
+              message = stringResource(R.string.recently_played_empty_message),
             )
           }
         }

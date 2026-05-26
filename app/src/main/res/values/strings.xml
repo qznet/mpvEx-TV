@@ -442,6 +442,10 @@
   <string name="enable_next_previous_navigation">Enable next/previous navigation</string>
   <string name="open_file">Open file</string>
   <string name="recently_played">Recently played</string>
+  <string name="recently_played_disabled_title">Recently Played is disabled</string>
+  <string name="recently_played_disabled_message">Enable it in Advanced Settings to track your playback history</string>
+  <string name="recently_played_empty_title">No recently played videos</string>
+  <string name="recently_played_empty_message">Videos you play will appear here</string>
   <string name="open_link">Open link</string>
   <string name="install">Install</string>
   <string name="download">Download</string>
@@ -455,6 +459,10 @@
   <string name="remove_playlist_items_confirm">The selected %2$s will be removed from this playlist. Original %3$s will not be deleted.</string>
   <string name="search_videos">Search videos…</string>
   <string name="search_folders_and_videos">Search folders and videos…</string>
+  <string name="playlists_empty_title">No playlists yet</string>
+  <string name="playlists_empty_message">Create a playlist or add one from an m3u URL</string>
+  <string name="no_playlists_found">No playlists found</string>
+  <string name="try_different_search">Try a different search term</string>
   <string name="search_playlists">Search playlists…</string>
   <string name="play_recently_played_or_first">Play recently played or first video</string>
   <string name="toggle_menu">Toggle menu</string>
@@ -495,6 +503,15 @@
   <string name="recents">Recents</string>
   <string name="playlists">Playlists</string>
   <string name="network">Network</string>
+  <string name="local_network">Local Network</string>
+  <string name="stream_link">Stream Link</string>
+  <string name="paste">Paste</string>
+  <string name="no_network_connections">No network connections</string>
+  <string name="add_network_connections_message">Add SMB, FTP, or WebDAV connections to browse network files</string>
+  <string name="scanning_for_videos">Scanning for videos...</string>
+  <string name="please_wait_scanning">Please wait while we search your device</string>
+  <string name="no_video_folders_found">No video folders found</string>
+  <string name="add_video_files_message">Add some video files to your device to see them here</string>
   <string name="seconds">Seconds</string>
   <string name="milliseconds">Milliseconds</string>
   <string name="name">Name</string>

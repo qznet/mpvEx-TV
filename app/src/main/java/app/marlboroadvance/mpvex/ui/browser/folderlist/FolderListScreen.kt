@@ -1,5 +1,6 @@
 package app.marlboroadvance.mpvex.ui.browser.folderlist
 
+import app.marlboroadvance.mpvex.R
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -650,14 +651,14 @@ private fun FolderListContent(
         if (showLoading) {
           LoadingState(
             icon = Icons.Filled.Folder,
-            title = "Scanning for videos...",
-            message = scanStatus ?: "Please wait while we search your device",
+            title = stringResource(R.string.scanning_for_videos),
+            message = scanStatus ?: stringResource(R.string.please_wait_scanning),
           )
         } else if (showEmpty) {
           EmptyState(
             icon = Icons.Filled.Folder,
-            title = "No video folders found",
-            message = "Add some video files to your device to see them here",
+            title = stringResource(R.string.no_video_folders_found),
+            message = stringResource(R.string.add_video_files_message),
           )
         }
       }

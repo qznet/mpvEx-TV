@@ -444,6 +444,10 @@
   <string name="enable_next_previous_navigation">启用上/下一集导航</string>
   <string name="open_file">打开文件</string>
   <string name="recently_played">最近播放</string>
+  <string name="recently_played_disabled_title">最近播放已禁用</string>
+  <string name="recently_played_disabled_message">在高级设置中启用以追踪您的播放历史</string>
+  <string name="recently_played_empty_title">无最近播放视频</string>
+  <string name="recently_played_empty_message">您播放过的视频将显示在此处</string>
   <string name="open_link">打开链接</string>
   <string name="install">安装</string>
   <string name="download">下载</string>
@@ -457,6 +461,10 @@
   <string name="remove_playlist_items_confirm">选中的 %2$s 将从该播放列表中移除。原始 %3$s 不会被删除。</string>
   <string name="search_videos">搜索视频…</string>
   <string name="search_folders_and_videos">搜索文件夹和视频…</string>
+  <string name="playlists_empty_title">暂无播放列表</string>
+  <string name="playlists_empty_message">创建播放列表或从 m3u URL 添加</string>
+  <string name="no_playlists_found">未找到播放列表</string>
+  <string name="try_different_search">尝试其他搜索关键词</string>
   <string name="search_playlists">搜索播放列表…</string>
   <string name="play_recently_played_or_first">播放上次播放或第一个视频</string>
   <string name="toggle_menu">切换菜单</string>
@@ -497,6 +505,15 @@
   <string name="recents">最近</string>
   <string name="playlists">播放列表</string>
   <string name="network">网络</string>
+  <string name="local_network">本地网络</string>
+  <string name="stream_link">串流链接</string>
+  <string name="paste">粘贴</string>
+  <string name="no_network_connections">无网络连接</string>
+  <string name="add_network_connections_message">添加 SMB、FTP 或 WebDAV 连接以浏览网络文件</string>
+  <string name="scanning_for_videos">正在扫描视频…</string>
+  <string name="please_wait_scanning">请稍候，正在搜索您的设备</string>
+  <string name="no_video_folders_found">未发现视频文件夹</string>
+  <string name="add_video_files_message">向设备中添加一些视频文件后即可在此处查看</string>
   <string name="seconds">秒</string>
   <string name="milliseconds">毫秒</string>
   <string name="name">名称</string>
