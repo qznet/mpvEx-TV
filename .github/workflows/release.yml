@@ -24,7 +24,7 @@ jobs:
       - name: Checkout LFS objects
         run: git lfs checkout
 
-      - name: Setup JDK 17 (Required for Gradle 9+)
+      - name: Setup JDK 17 (For Gradle Build)
         uses: actions/setup-java@v4
         with:
           distribution: 'adopt'
@@ -33,39 +33,66 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build release with Gradle (Using JDK 17)
+      - name: Build APKs
         run: ./gradlew assembleDefaultRelease --stacktrace
 
-      - name: Setup JDK 11 (Temporary switch for Signing compatibility)
+      - name: Setup JDK 11 (For Legacy Signing)
         uses: actions/setup-java@v4
         with:
           distribution: 'adopt'
           java-version: 11
 
-      - name: Sign APKs (Using JDK 11)
-        uses: r0adkll/sign-android-release@v1
-        id: sign_app
-        with:
-          releaseDirectory: app/build/outputs/apk/default/release
-          signingKeyBase64: ${{ secrets.SIGNING_KEYSTORE }}
-          alias: ${{ secrets.SIGNING_KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
+      - name: Sign and Verify APKs
         env:
-          BUILD_TOOLS_VERSION: "34.0.0"
+          SIGNING_KEYSTORE: ${{ secrets.SIGNING_KEYSTORE }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -e
+          # 1. 验证 Secrets 是否存在
+          if [ -z "$SIGNING_KEYSTORE" ]; then echo "❌ 错误: SIGNING_KEYSTORE 为空，请检查 GitHub Secrets 设置"; exit 1; fi
+          if [ -z "$SIGNING_KEY_ALIAS" ]; then echo "❌ 错误: SIGNING_KEY_ALIAS 为空"; exit 1; fi
+          
+          # 2. 解码 Keystore (使用 -di 忽略可能的干扰字符)
+          echo "$SIGNING_KEYSTORE" | base64 -di > release.keystore
+          
+          # 3. 检查文件大小
+          FILESIZE=$(stat -c%s "release.keystore")
+          echo "📁 Keystore decoded, size: $FILESIZE bytes"
+          if [ "$FILESIZE" -lt 100 ]; then echo "❌ 错误: Keystore 文件过小，解码可能失败"; exit 1; fi
+
+          # 4. 循环签名所有 APK
+          BUILD_TOOLS_DIR="$ANDROID_HOME/build-tools/34.0.0"
+          APK_DIR="app/build/outputs/apk/default/release"
+          
+          find "$APK_DIR" -name "*-unsigned.apk" -type f | while read -r apk; do
+            echo "🖋️ Signing $apk..."
+            aligned_apk="${apk/-unsigned/-aligned}"
+            signed_apk="${apk/-unsigned/-signed}"
+            
+            $BUILD_TOOLS_DIR/zipalign -v 4 "$apk" "$aligned_apk"
+            $BUILD_TOOLS_DIR/apksigner sign --ks release.keystore \
+              --ks-key-alias "$SIGNING_KEY_ALIAS" \
+              --ks-pass "pass:$SIGNING_STORE_PASSWORD" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --out "$signed_apk" "$aligned_apk"
+            
+            $BUILD_TOOLS_DIR/apksigner verify "$signed_apk"
+            echo "✅ Signed: $signed_apk"
+          done
+          rm release.keystore
 
       - name: Rename and Prepare Artifacts
         run: |
           set -euo pipefail
           VERSION_TAG=${GITHUB_REF#refs/tags/}
-          
-          echo "📦 Processing signed APKs..."
+          echo "📦 Renaming artifacts for release..."
           find app/build/outputs/apk/default/release -name "*-signed.apk" -type f | while read -r src; do
-            filename=$(basename "$src")
-            abi=$(echo "$filename" | sed 's/app-default-//;s/-release-signed.apk//')
+            abi=$(basename "$src" | sed 's/app-default-//;s/-release-signed.apk//')
             dst="mpvNAS-Player-${abi}-${VERSION_TAG}.apk"
             cp "$src" "$dst"
-            echo "✅ Created $dst"
+            sha256sum "$dst" | awk '{ print $1 }' > "${dst}.sha256"
           done
 
       - name: Create GitHub Release
@@ -74,11 +101,12 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: mpv NAS Player ${{ github.ref_name }}
           body: |
-            ### 🚀 mpv NAS Player ${{ github.ref_name }} 正式版
+            ### 🚀 mpv NAS Player ${{ github.ref_name }}
             
-            基于最新 **mpv v0.41.0** 与 **FFmpeg 8.x** 核心构建。
+            搭载最强 **mpv v0.41.0** 内核。
           files: |
             mpvNAS-Player-*.apk
+            *.sha256
           draft: false
           prerelease: false
         env:
