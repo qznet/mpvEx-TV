@@ -78,108 +78,34 @@ jobs:
           ls -lah "$FDROID_RELEASE_DIR"
 
       - name: Sign APKs
-        run: |
-          set -e
-          DEFAULT_RELEASE_DIR="app/build/outputs/apk/default/release"
-          PLAYSTORE_RELEASE_DIR="app/build/outputs/apk/playstore/release"
-          FDROID_RELEASE_DIR="app/build/outputs/apk/fdroid/release"
-          
-          echo "${{ secrets.SIGNING_KEYSTORE }}" | base64 -d > release.keystore
-          
-          # Sign default APKs
-          APK_COUNT=$(find "$DEFAULT_RELEASE_DIR" -name "app-default-*-release-unsigned.apk" -type f | wc -l)
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "No unsigned default APK files found"
-            ls -lah "$DEFAULT_RELEASE_DIR"
-            rm release.keystore
-            exit 1
-          fi
-          
-          find "$DEFAULT_RELEASE_DIR" -name "app-default-*-release-unsigned.apk" -type f | while read -r apk; do
-            signed_apk="${apk/-unsigned/}"
-          
-            $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
-              --ks release.keystore \
-              --ks-key-alias "${{ secrets.SIGNING_KEY_ALIAS }}" \
-              --ks-pass "pass:${{ secrets.SIGNING_STORE_PASSWORD }}" \
-              --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
-              --out "$signed_apk" \
-              "$apk"
-          
-            $ANDROID_HOME/build-tools/34.0.0/apksigner verify "$signed_apk"
-            rm "$apk"
-          done
-          
-          # Sign Play Store APK (universal only)
-          PLAYSTORE_APK="$PLAYSTORE_RELEASE_DIR/app-playstore-universal-release-unsigned.apk"
-          if [ ! -f "$PLAYSTORE_APK" ]; then
-            echo "No unsigned Play Store universal APK found"
-            ls -lah "$PLAYSTORE_RELEASE_DIR"
-            rm release.keystore
-            exit 1
-          fi
-          
-          SIGNED_PLAYSTORE_APK="${PLAYSTORE_APK/-unsigned/}"
-          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
-            --ks release.keystore \
-            --ks-key-alias "${{ secrets.SIGNING_KEY_ALIAS }}" \
-            --ks-pass "pass:${{ secrets.SIGNING_STORE_PASSWORD }}" \
-            --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
-            --out "$SIGNED_PLAYSTORE_APK" \
-            "$PLAYSTORE_APK"
-          
-          $ANDROID_HOME/build-tools/34.0.0/apksigner verify "$SIGNED_PLAYSTORE_APK"
-          rm "$PLAYSTORE_APK"
-          
-          # Sign F-Droid APKs
-          APK_COUNT=$(find "$FDROID_RELEASE_DIR" -name "app-fdroid-*-release-unsigned.apk" -type f | wc -l)
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "No unsigned F-Droid APK files found"
-            ls -lah "$FDROID_RELEASE_DIR"
-            rm release.keystore
-            exit 1
-          fi
-          
-          find "$FDROID_RELEASE_DIR" -name "app-fdroid-*-release-unsigned.apk" -type f | while read -r apk; do
-            signed_apk="${apk/-unsigned/}"
-          
-            $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
-              --ks release.keystore \
-              --ks-key-alias "${{ secrets.SIGNING_KEY_ALIAS }}" \
-              --ks-pass "pass:${{ secrets.SIGNING_STORE_PASSWORD }}" \
-              --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
-              --out "$signed_apk" \
-              "$apk"
-          
-            $ANDROID_HOME/build-tools/34.0.0/apksigner verify "$signed_apk"
-            rm "$apk"
-          done
-          
-          rm release.keystore
-          echo "Default APKs:"
-          ls -lh "$DEFAULT_RELEASE_DIR"/app-default-*-release.apk
-          echo "Play Store APK:"
-          ls -lh "$PLAYSTORE_RELEASE_DIR"/app-playstore-universal-release.apk
-          echo "F-Droid APKs:"
-          ls -lh "$FDROID_RELEASE_DIR"/app-fdroid-*-release.apk
+        uses: r0adkll/sign-android-release@v1
+        id: sign_app
+        with:
+          releaseDirectory: app/build/outputs/apk/default/release
+          signingKeyBase64: ${{ secrets.SIGNING_KEYSTORE }}
+          alias: ${{ secrets.SIGNING_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: "34.0.0"
 
-      - name: Copy build artifacts
+      - name: Rename and Prepare Artifacts
         run: |
           set -euo pipefail
+          VERSION_TAG=$(basename $GITHUB_REF)
           
-          # Default flavor APKs
+          # Default flavor APKs (The signing action adds -signed suffix)
           default_apks=("universal" "arm64-v8a" "armeabi-v7a" "x86" "x86_64")
           for abi in "${default_apks[@]}"; do
-            src="app/build/outputs/apk/default/release/app-default-${abi}-release.apk"
-            dst="mpvEx-${abi}-${VERSION_TAG}.apk"
-            if [ ! -f "$src" ]; then
-              echo "::error file=$src::Signed default APK for $abi was not found"
-              exit 1
+            src="app/build/outputs/apk/default/release/app-default-${abi}-release-signed.apk"
+            dst="mpvNAS-Player-${abi}-${VERSION_TAG}.apk"
+            if [ -f "$src" ]; then
+              cp "$src" "$dst"
+              checksum=$(sha256sum "$dst" | awk '{ print $1 }')
+              echo "apk_${abi//-/_}_sha256=$checksum" >> "$GITHUB_ENV"
+            else
+              echo "Warning: Signed APK for $abi not found at $src"
             fi
-            cp "$src" "$dst"
-            checksum=$(sha256sum "$dst" | awk '{ print $1 }')
-            varname="apk_${abi//-/_}_sha256"
-            echo "$varname=$checksum" >> "$GITHUB_ENV"
           done
           
           # Play Store flavor APK (universal only)
