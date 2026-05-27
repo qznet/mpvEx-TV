@@ -24,16 +24,16 @@ jobs:
       - name: Checkout LFS objects
         run: git lfs checkout
 
-      - name: Setup JDK 17
+      - name: Setup JDK 11 (Better compatibility for old Keystores)
         uses: actions/setup-java@v4
         with:
           distribution: 'adopt'
-          java-version: 17
+          java-version: 11
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build default release with Gradle
+      - name: Build release with Gradle
         run: ./gradlew assembleDefaultRelease --stacktrace
 
       - name: Sign APKs
@@ -51,22 +51,18 @@ jobs:
       - name: Rename and Prepare Artifacts
         run: |
           set -euo pipefail
-          VERSION_TAG=$(basename $GITHUB_REF)
+          VERSION_TAG=${GITHUB_REF#refs/tags/}
           
-          # Find all signed APKs and move them to root with better names
-          # The signing action places signed APKs in the same releaseDirectory
+          echo "📦 Processing signed APKs..."
           find app/build/outputs/apk/default/release -name "*-signed.apk" -type f | while read -r src; do
             filename=$(basename "$src")
-            # Extract ABI from filename like app-default-arm64-v8a-release-signed.apk
+            # Convert name to mpvNAS-Player-abi-version.apk
             abi=$(echo "$filename" | sed 's/app-default-//;s/-release-signed.apk//')
             dst="mpvNAS-Player-${abi}-${VERSION_TAG}.apk"
             cp "$src" "$dst"
-            checksum=$(sha256sum "$dst" | awk '{ print $1 }')
-            # Set environment variable for checksums in release body
-            echo "apk_${abi//-/_}_sha256=$checksum" >> "$GITHUB_ENV"
+            sha256sum "$dst" | awk '{ print $1 }' > "${dst}.sha256"
+            echo "✅ Created $dst"
           done
-          
-          ls -lah mpvNAS-Player-*.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -74,16 +70,12 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: mpv NAS Player ${{ github.ref_name }}
           body: |
-            ---
-            ### Checksums
-
-            | Variant | SHA-256 |
-            | ------- | ------- |
-            | arm64-v8a | ${{ env.apk_arm64_v8a_sha256 }} |
-            | armeabi-v7a | ${{ env.apk_armeabi_v7a_sha256 }} |
-            | Universal | ${{ env.apk_universal_sha256 }} |
-            | x86 | ${{ env.apk_x86_sha256 }} |
-            | x86_64 | ${{ env.apk_x86_64_sha256 }} |
+            ### 🚀 mpv NAS Player ${{ github.ref_name }} 正式版
+            
+            基于最新 **mpv v0.41.0** 与 **FFmpeg 8.x** 核心构建。
+            
+            #### 📦 资产校验 (SHA-256)
+            下载后请比对各版本校验码确保文件完整性。
           files: |
             mpvNAS-Player-*.apk
           draft: false
