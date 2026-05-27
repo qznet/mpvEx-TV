@@ -22,7 +22,7 @@ wasbuilt () {
 
 markbuilt () {
 	varname="built_${1//-/_}"
-	declare -g "$varname=0"
+	eval "$varname=0"
 }
 
 loadndk () {

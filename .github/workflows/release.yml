@@ -29,8 +29,8 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build standard release with Gradle
-        run: ./gradlew assembleStandardRelease --stacktrace
+      - name: Build default release with Gradle
+        run: ./gradlew assembleDefaultRelease --stacktrace
 
       - name: Build Play Store release with Gradle
         run: ./gradlew assemblePlaystoreRelease --stacktrace
@@ -44,12 +44,12 @@ jobs:
 
       - name: Verify build output
         run: |
-          STANDARD_RELEASE_DIR="app/build/outputs/apk/standard/release"
+          DEFAULT_RELEASE_DIR="app/build/outputs/apk/default/release"
           PLAYSTORE_RELEASE_DIR="app/build/outputs/apk/playstore/release"
           FDROID_RELEASE_DIR="app/build/outputs/apk/fdroid/release"
           
-          if [ ! -d "$STANDARD_RELEASE_DIR" ]; then
-            echo "Standard release directory does not exist!"
+          if [ ! -d "$DEFAULT_RELEASE_DIR" ]; then
+            echo "Default release directory does not exist!"
             find app/build/outputs -name "*.apk" -type f
             exit 1
           fi
@@ -66,8 +66,8 @@ jobs:
             exit 1
           fi
           
-          echo "Standard release APKs:"
-          ls -lah "$STANDARD_RELEASE_DIR"
+          echo "Default release APKs:"
+          ls -lah "$DEFAULT_RELEASE_DIR"
           echo "Play Store release APKs:"
           ls -lah "$PLAYSTORE_RELEASE_DIR"
           echo "F-Droid release APKs:"
@@ -76,22 +76,22 @@ jobs:
       - name: Sign APKs
         run: |
           set -e
-          STANDARD_RELEASE_DIR="app/build/outputs/apk/standard/release"
+          DEFAULT_RELEASE_DIR="app/build/outputs/apk/default/release"
           PLAYSTORE_RELEASE_DIR="app/build/outputs/apk/playstore/release"
           FDROID_RELEASE_DIR="app/build/outputs/apk/fdroid/release"
           
           echo "${{ secrets.SIGNING_KEYSTORE }}" | base64 -d > release.keystore
           
-          # Sign standard APKs
-          APK_COUNT=$(find "$STANDARD_RELEASE_DIR" -name "app-standard-*-release-unsigned.apk" -type f | wc -l)
+          # Sign default APKs
+          APK_COUNT=$(find "$DEFAULT_RELEASE_DIR" -name "app-default-*-release-unsigned.apk" -type f | wc -l)
           if [ "$APK_COUNT" -eq 0 ]; then
-            echo "No unsigned standard APK files found"
-            ls -lah "$STANDARD_RELEASE_DIR"
+            echo "No unsigned default APK files found"
+            ls -lah "$DEFAULT_RELEASE_DIR"
             rm release.keystore
             exit 1
           fi
           
-          find "$STANDARD_RELEASE_DIR" -name "app-standard-*-release-unsigned.apk" -type f | while read -r apk; do
+          find "$DEFAULT_RELEASE_DIR" -name "app-default-*-release-unsigned.apk" -type f | while read -r apk; do
             signed_apk="${apk/-unsigned/}"
           
             $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
@@ -152,8 +152,8 @@ jobs:
           done
           
           rm release.keystore
-          echo "Standard APKs:"
-          ls -lh "$STANDARD_RELEASE_DIR"/app-standard-*-release.apk
+          echo "Default APKs:"
+          ls -lh "$DEFAULT_RELEASE_DIR"/app-default-*-release.apk
           echo "Play Store APK:"
           ls -lh "$PLAYSTORE_RELEASE_DIR"/app-playstore-universal-release.apk
           echo "F-Droid APKs:"
@@ -163,13 +163,13 @@ jobs:
         run: |
           set -euo pipefail
           
-          # Standard flavor APKs
-          standard_apks=("universal" "arm64-v8a" "armeabi-v7a" "x86" "x86_64")
-          for abi in "${standard_apks[@]}"; do
-            src="app/build/outputs/apk/standard/release/app-standard-${abi}-release.apk"
+          # Default flavor APKs
+          default_apks=("universal" "arm64-v8a" "armeabi-v7a" "x86" "x86_64")
+          for abi in "${default_apks[@]}"; do
+            src="app/build/outputs/apk/default/release/app-default-${abi}-release.apk"
             dst="mpvEx-${abi}-${VERSION_TAG}.apk"
             if [ ! -f "$src" ]; then
-              echo "::error file=$src::Signed standard APK for $abi was not found"
+              echo "::error file=$src::Signed default APK for $abi was not found"
               exit 1
             fi
             cp "$src" "$dst"

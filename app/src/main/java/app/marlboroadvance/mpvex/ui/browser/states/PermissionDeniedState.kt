@@ -179,7 +179,7 @@ fun PermissionDeniedState(
               // Play Store build: Use regular permission request
               onRequestPermission()
             } else {
-              // Standard build: Open All Files Access settings for Android 11+
+              // Default build: Open All Files Access settings for Android 11+
               if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 try {
                   val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
@@ -293,7 +293,7 @@ fun PermissionDeniedState(
               color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
           } else {
-            // Standard build explanation
+            // Default build explanation
             Text(
               text = "mpvEx has always required storage access permission as it's essential for the app to find all media and subtitle files on your device, including the ones that are not supported by the system.",
               style = MaterialTheme.typography.bodyMedium,

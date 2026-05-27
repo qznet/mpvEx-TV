@@ -30,35 +30,35 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build with Gradle
-        run: ./gradlew assembleStandardRelease
+        run: ./gradlew assembleDefaultRelease
 
       - name: Upload app-arm64-v8a Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-standard-arm64-v8a-release-unsigned-${{ env.SHORT_SHA }}
-          path: app/build/outputs/apk/standard/release/app-standard-arm64-v8a-release-unsigned.apk
+          name: app-default-arm64-v8a-release-unsigned-${{ env.SHORT_SHA }}
+          path: app/build/outputs/apk/default/release/app-default-arm64-v8a-release-unsigned.apk
           if-no-files-found: warn
       - name: Upload app-armeabi-v7a Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-standard-armeabi-v7a-release-unsigned-${{ env.SHORT_SHA }}
-          path: app/build/outputs/apk/standard/release/app-standard-armeabi-v7a-release-unsigned.apk
+          name: app-default-armeabi-v7a-release-unsigned-${{ env.SHORT_SHA }}
+          path: app/build/outputs/apk/default/release/app-default-armeabi-v7a-release-unsigned.apk
           if-no-files-found: warn
       - name: Upload app-universal Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-standard-universal-release-unsigned-${{ env.SHORT_SHA }}
-          path: app/build/outputs/apk/standard/release/app-standard-universal-release-unsigned.apk
+          name: app-default-universal-release-unsigned-${{ env.SHORT_SHA }}
+          path: app/build/outputs/apk/default/release/app-default-universal-release-unsigned.apk
           if-no-files-found: warn
       - name: Upload app-x86 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-standard-x86-release-unsigned-${{ env.SHORT_SHA }}
-          path: app/build/outputs/apk/standard/release/app-standard-x86-release-unsigned.apk
+          name: app-default-x86-release-unsigned-${{ env.SHORT_SHA }}
+          path: app/build/outputs/apk/default/release/app-default-x86-release-unsigned.apk
           if-no-files-found: warn
       - name: Upload app-x86_64 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-standard-x86_64-release-unsigned-${{ env.SHORT_SHA }}
-          path: app/build/outputs/apk/standard/release/app-standard-x86_64-release-unsigned.apk
+          name: app-default-x86_64-release-unsigned-${{ env.SHORT_SHA }}
+          path: app/build/outputs/apk/default/release/app-default-x86_64-release-unsigned.apk
           if-no-files-found: warn
