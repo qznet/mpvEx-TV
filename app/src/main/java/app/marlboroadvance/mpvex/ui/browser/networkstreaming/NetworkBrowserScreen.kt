@@ -41,6 +41,9 @@ import app.marlboroadvance.mpvex.ui.browser.cards.NetworkFolderCard
 import app.marlboroadvance.mpvex.ui.browser.cards.NetworkVideoCard
 import app.marlboroadvance.mpvex.ui.browser.components.BrowserTopBar
 import app.marlboroadvance.mpvex.ui.browser.states.EmptyState
+import app.marlboroadvance.mpvex.ui.browser.dialogs.DeleteConfirmationDialog
+import app.marlboroadvance.mpvex.ui.browser.selection.rememberSelectionManager
+import app.marlboroadvance.mpvex.ui.browser.selection.SelectionManager
 import app.marlboroadvance.mpvex.ui.preferences.PreferencesScreen
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import kotlinx.serialization.Serializable
@@ -76,6 +79,16 @@ data class NetworkBrowserScreen(
 
     // UI State
     val isRefreshing = remember { mutableStateOf(false) }
+    val deleteDialogOpen = remember { mutableStateOf(false) }
+
+    // Selection manager
+    val selectionManager =
+      rememberSelectionManager(
+        items = files.filter { !it.isDirectory && it.mimeType?.startsWith("video/") == true },
+        getId = { it.path },
+        onDeleteItems = { items, _ -> viewModel.deleteFiles(items) },
+        onOperationComplete = { viewModel.loadFiles() },
+      )
 
     // Load files when connectionId or currentPath changes
     LaunchedEffect(connectionId, currentPath) {
@@ -83,57 +96,88 @@ data class NetworkBrowserScreen(
     }
 
     BackHandler {
-      backstack.removeLastOrNull()
+      if (selectionManager.isInSelectionMode) {
+        selectionManager.clear()
+      } else {
+        backstack.removeLastOrNull()
+      }
     }
 
     Scaffold(
       topBar = {
         BrowserTopBar(
           title = connectionName,
-          isInSelectionMode = false,
-          selectedCount = 0,
-          totalCount = 0,
-          onBackClick = { backstack.removeLastOrNull() },
-          onCancelSelection = {},
+          isInSelectionMode = selectionManager.isInSelectionMode,
+          selectedCount = selectionManager.selectedCount,
+          totalCount = files.count { !it.isDirectory && it.mimeType?.startsWith("video/") == true },
+          onBackClick = {
+            if (selectionManager.isInSelectionMode) {
+              selectionManager.clear()
+            } else {
+              backstack.removeLastOrNull()
+            }
+          },
+          onCancelSelection = { selectionManager.clear() },
           onSortClick = null,
           onSearchClick = null,
           onSettingsClick = {
             backstack.add(app.marlboroadvance.mpvex.ui.preferences.PreferencesScreen)
           },
-          onDeleteClick = null,
+          onDeleteClick = { deleteDialogOpen.value = true },
           onRenameClick = null,
-          isSingleSelection = false,
+          isSingleSelection = selectionManager.isSingleSelection,
           onInfoClick = null,
           onShareClick = null,
           onPlayClick = null,
-          onSelectAll = null,
-          onInvertSelection = null,
-          onDeselectAll = null,
+          onSelectAll = { selectionManager.selectAll() },
+          onInvertSelection = { selectionManager.invertSelection() },
+          onDeselectAll = { selectionManager.clear() },
         )
       },
     ) { padding ->
-      NetworkBrowserContent(
-        files = files,
-        connectionId = connectionId,
-        connectionName = connectionName,
-        isLoading = isLoading && files.isEmpty(),
-        isRefreshing = isRefreshing,
-        error = error,
-        onRefresh = { viewModel.loadFiles() },
-        onFolderClick = { folder ->
-          backstack.add(
-            NetworkBrowserScreen(
-              connectionId = connectionId,
-              connectionName = connectionName,
-              currentPath = folder.path,
-            ),
-          )
-        },
-        onVideoClick = { video ->
-          viewModel.playVideo(video)
-        },
-        modifier = Modifier.padding(padding),
-      )
+      Box(modifier = Modifier.fillMaxSize()) {
+        NetworkBrowserContent(
+          files = files,
+          connectionId = connectionId,
+          connectionName = connectionName,
+          isLoading = isLoading && files.isEmpty(),
+          isRefreshing = isRefreshing,
+          error = error,
+          onRefresh = { viewModel.loadFiles() },
+          onFolderClick = { folder ->
+            if (!selectionManager.isInSelectionMode) {
+              backstack.add(
+                NetworkBrowserScreen(
+                  connectionId = connectionId,
+                  connectionName = connectionName,
+                  currentPath = folder.path,
+                ),
+              )
+            }
+          },
+          onVideoClick = { video ->
+            if (selectionManager.isInSelectionMode) {
+              selectionManager.toggle(video)
+            } else {
+              viewModel.playVideo(video)
+            }
+          },
+          onVideoLongClick = { video ->
+            selectionManager.toggle(video)
+          },
+          selectionManager = selectionManager,
+          modifier = Modifier.padding(padding),
+        )
+
+        DeleteConfirmationDialog(
+          isOpen = deleteDialogOpen.value,
+          onDismiss = { deleteDialogOpen.value = false },
+          onConfirm = { selectionManager.deleteSelected() },
+          itemType = "video",
+          itemCount = selectionManager.selectedCount,
+          itemNames = selectionManager.getSelectedItems().map { it.name },
+        )
+      }
     }
   }
 }
@@ -149,6 +193,8 @@ private fun NetworkBrowserContent(
   onRefresh: suspend () -> Unit,
   onFolderClick: (NetworkFile) -> Unit,
   onVideoClick: (NetworkFile) -> Unit,
+  onVideoLongClick: (NetworkFile) -> Unit,
+  selectionManager: SelectionManager<NetworkFile, String>,
   modifier: Modifier = Modifier,
 ) {
   // Load connection details
@@ -251,50 +297,53 @@ private fun NetworkBrowserContent(
                 bottom = navigationBarHeight
               ),
             ) {
-            // Folders section
-            if (folders.isNotEmpty()) {
-              item {
-                Text(
-                  text = "Folders",
-                  style = MaterialTheme.typography.titleMedium,
-                  color = MaterialTheme.colorScheme.primary,
-                  modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
-                )
-              }
-              items(
-                items = folders,
-                key = { it.path },
-              ) { folder ->
-                NetworkFolderCard(
-                  file = folder,
-                  onClick = { onFolderClick(folder) },
-                  modifier = Modifier,
-                )
-              }
-            }
-
-            // Videos section
-            if (videos.isNotEmpty()) {
-              item {
-                Text(
-                  text = "Videos",
-                  style = MaterialTheme.typography.titleMedium,
-                  color = MaterialTheme.colorScheme.primary,
-                  modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
-                )
-              }
-              items(
-                items = videos,
-                key = { it.path },
-              ) { video ->
-                // Only show card if connection is loaded
-                connection?.let { conn ->
-                  NetworkVideoCard(
-                    file = video,
-                    connection = conn,
-                    onClick = { onVideoClick(video) },
+              // Folders section
+              if (folders.isNotEmpty()) {
+                item {
+                  Text(
+                    text = "Folders",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
+                  )
+                }
+                items(
+                  items = folders,
+                  key = { it.path },
+                ) { folder ->
+                  NetworkFolderCard(
+                    file = folder,
+                    onClick = { onFolderClick(folder) },
                     modifier = Modifier,
                   )
+                }
+              }
+
+              // Videos section
+              if (videos.isNotEmpty()) {
+                item {
+                  Text(
+                    text = "Videos",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
+                  )
+                }
+                items(
+                  items = videos,
+                  key = { it.path },
+                ) { video ->
+                  // Only show card if connection is loaded
+                  connection?.let { conn ->
+                    NetworkVideoCard(
+                      file = video,
+                      connection = conn,
+                      onClick = { onVideoClick(video) },
+                      onLongClick = { onVideoLongClick(video) },
+                      isSelected = selectionManager.isSelected(video),
+                      modifier = Modifier,
+                    )
+                  }
                 }
               }
             }
@@ -303,5 +352,4 @@ private fun NetworkBrowserContent(
       }
     }
   }
-}
 }

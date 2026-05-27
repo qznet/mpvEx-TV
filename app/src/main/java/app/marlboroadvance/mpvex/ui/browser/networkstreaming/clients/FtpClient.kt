@@ -146,6 +146,22 @@ class FtpClient(private val connection: NetworkConnection) : NetworkClient {
       }
     }
 
+  override suspend fun deleteFile(path: String): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      try {
+        if (!isConnected()) connect().getOrThrow()
+        val client = ftpClient!!
+        val success = client.deleteFile(path)
+        if (success) {
+          Result.success(Unit)
+        } else {
+          Result.failure(Exception("Failed to delete file on FTP server"))
+        }
+      } catch (e: Exception) {
+        Result.failure(e)
+      }
+    }
+
   private fun getMimeType(fileName: String): String? {
     val extension = fileName.substringAfterLast('.', "").lowercase()
     return when (extension) {

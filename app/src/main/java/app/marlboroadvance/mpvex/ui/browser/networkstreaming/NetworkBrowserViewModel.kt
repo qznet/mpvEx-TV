@@ -73,6 +73,35 @@ class NetworkBrowserViewModel(
 
 
   /**
+   * Delete files from the network share
+   */
+  suspend fun deleteFiles(filesToDelete: List<NetworkFile>): Pair<Int, Int> {
+    var deleted = 0
+    var failed = 0
+    
+    try {
+      val connection = repository.getConnectionById(connectionId)
+        ?: return Pair(0, filesToDelete.size)
+        
+      for (file in filesToDelete) {
+        repository.deleteFile(connection, file.path)
+          .onSuccess {
+            deleted++
+          }
+          .onFailure { e ->
+            Log.e(TAG, "Failed to delete file: ${file.path}", e)
+            failed++
+          }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in deleteFiles", e)
+      failed += filesToDelete.size - deleted - failed
+    }
+    
+    return Pair(deleted, failed)
+  }
+
+  /**
    * Play a video file
    */
   fun playVideo(file: NetworkFile) {

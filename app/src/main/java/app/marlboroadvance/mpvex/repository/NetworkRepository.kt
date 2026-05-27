@@ -218,6 +218,37 @@ class NetworkRepository(
     }
 
   /**
+   * Delete a file on the network share
+   */
+  suspend fun deleteFile(
+    connection: NetworkConnection,
+    path: String,
+  ): Result<Unit> =
+    try {
+      // Always fetch the latest connection from database to ensure we have current credentials
+      val latestConnection = dao.getConnectionById(connection.id) ?: connection
+
+      // Check if we have an active client
+      val existingClient = activeClients[connection.id]
+
+      // If no client exists, or if connection details have changed, create a new one
+      val client = if (existingClient == null) {
+        // Create new client with latest connection settings
+        NetworkClientFactory.createClient(latestConnection).also { newClient ->
+          newClient.connect().getOrThrow()
+          activeClients[connection.id] = newClient
+        }
+      } else {
+        existingClient
+      }
+
+      // Delete file
+      client.deleteFile(path)
+    } catch (e: Exception) {
+      Result.failure(e)
+    }
+
+  /**
    * Get an active client for a connection
    */
   fun getActiveClient(connectionId: Long): NetworkClient? = activeClients[connectionId]

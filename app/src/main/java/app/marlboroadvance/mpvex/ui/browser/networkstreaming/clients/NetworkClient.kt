@@ -42,4 +42,9 @@ interface NetworkClient {
    * Get file URI for playback
    */
   suspend fun getFileUri(path: String): Result<Uri>
+
+  /**
+   * Delete a file on the server
+   */
+  suspend fun deleteFile(path: String): Result<Unit>
 }
