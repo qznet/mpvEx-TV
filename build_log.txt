@@ -1,0 +1,20 @@
++ set -e
+++ pwd
++ PROJECT_ROOT=/Users/peilinxiong/StudioProjects/mpvExtended-android
++ AAR_PATH=/Users/peilinxiong/StudioProjects/mpvExtended-android/app/libs/mpv-android-lib-v0.0.1.aar
++ BUILD_DIR=/Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts
++ TEMP_DIR=/Users/peilinxiong/StudioProjects/mpvExtended-android/temp_aar_build
++ ARCHS=("arm64" "armv7l" "x86" "x86_64")
++ export 'JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home'
++ JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home'
++ export ANDROID_HOME=/Users/peilinxiong/Library/Android/sdk
++ ANDROID_HOME=/Users/peilinxiong/Library/Android/sdk
++ export 'PATH=/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin:/Users/peilinxiong/Library/Android/sdk/platform-tools:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/opt/X11/bin:/usr/local/co.palokaj.battery:/opt/homebrew/bin:/Users/peilinxiong/.antigravity-ide/antigravity-ide/bin:/Users/peilinxiong/.mavis/bin:/Users/peilinxiong/.local/bin:/Users/peilinxiong/google-cloud-sdk/bin:/Users/peilinxiong/.antigravity/antigravity/bin:/Users/peilinxiong/.nvm/versions/node/v24.13.0/bin:/Users/peilinxiong/bin:/opt/homebrew/sbin:/Users/peilinxiong/.lmstudio/bin'
++ PATH='/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin:/Users/peilinxiong/Library/Android/sdk/platform-tools:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/opt/X11/bin:/usr/local/co.palokaj.battery:/opt/homebrew/bin:/Users/peilinxiong/.antigravity-ide/antigravity-ide/bin:/Users/peilinxiong/.mavis/bin:/Users/peilinxiong/.local/bin:/Users/peilinxiong/google-cloud-sdk/bin:/Users/peilinxiong/.antigravity/antigravity/bin:/Users/peilinxiong/.nvm/versions/node/v24.13.0/bin:/Users/peilinxiong/bin:/opt/homebrew/sbin:/Users/peilinxiong/.lmstudio/bin'
++ echo '🚀 开始自动更新 MPV AAR 核心...'
+🚀 开始自动更新 MPV AAR 核心...
++ chmod +x /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/buildall.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/download.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/dav1d.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/ffmpeg.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/fontconfig.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/freetype2.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/fribidi.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/harfbuzz.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/libass.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/libplacebo.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/libxml2.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/lua.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/mbedtls.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/mpv-android.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/mpv.sh /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts/scripts/unibreak.sh
++ echo '📥 正在检查/下载最新的源码依赖 (FFmpeg, mpv, etc.)...'
+📥 正在检查/下载最新的源码依赖 (FFmpeg, mpv, etc.)...
++ cd /Users/peilinxiong/StudioProjects/mpvExtended-android/buildscripts
++ ./download.sh
