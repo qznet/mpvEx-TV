@@ -35,6 +35,11 @@ class NetworkRepository(
   suspend fun getAutoConnectConnections(): List<NetworkConnection> = dao.getAutoConnectConnections()
 
   /**
+   * Get all saved connections as a snapshot list.
+   */
+  suspend fun getAllConnectionsList(): List<NetworkConnection> = dao.getAllConnectionsList()
+
+  /**
    * Get a connection by ID
    */
   suspend fun getConnectionById(id: Long): NetworkConnection? = dao.getConnectionById(id)

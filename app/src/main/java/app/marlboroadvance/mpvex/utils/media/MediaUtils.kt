@@ -3,6 +3,7 @@ package app.marlboroadvance.mpvex.utils.media
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import app.marlboroadvance.mpvex.BuildConfig
@@ -36,6 +37,8 @@ import java.io.File
  * bypassing MediaUtils.
  */
 object MediaUtils {
+  private const val TAG = "MediaUtils"
+
   /**
    * Play video content from any source.
    *
@@ -59,12 +62,19 @@ object MediaUtils {
           intent.setClass(context, PlayerActivity::class.java)
           intent.putExtra("internal_launch", true) // Enables subtitle autoload
           launchSource?.let { intent.putExtra("launch_source", it) }
+          if (source.uri.scheme.equals("mpvnas", ignoreCase = true)) {
+            intent.putExtra("title", source.displayName)
+            intent.putExtra("filename", source.displayName)
+          }
           
           // For playlist items, pass the title so it shows correctly in the player
           if (launchSource != null && (launchSource.contains("playlist") || launchSource == "m3u_playlist")) {
             intent.putExtra("title", source.displayName)
           }
-          
+          Log.d(
+            TAG,
+            "Launching PlayerActivity from Video source: uri=${source.uri}, displayName=${source.displayName}, launchSource=$launchSource, networkConnectionId=${source.networkConnectionId}",
+          )
           context.startActivity(intent)
           return
         }
@@ -99,6 +109,7 @@ object MediaUtils {
     intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     launchSource?.let { intent.putExtra("launch_source", it) }
+    Log.d(TAG, "Launching PlayerActivity from raw source: uri=$uri, launchSource=$launchSource")
     context.startActivity(intent)
   }
 

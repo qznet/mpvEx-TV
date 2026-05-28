@@ -13,6 +13,7 @@ interface RecentlyPlayedRepository {
     width: Int = 0,
     height: Int = 0,
     launchSource: String? = null,
+    networkConnectionId: Long? = null,
     playlistId: Int? = null,
   )
 

@@ -15,5 +15,6 @@ data class RecentlyPlayedEntity(
   val height: Int = 0,
   val timestamp: Long,
   val launchSource: String? = null,
+  val networkConnectionId: Long? = null,
   val playlistId: Int? = null,
 )

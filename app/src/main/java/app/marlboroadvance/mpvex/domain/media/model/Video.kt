@@ -23,6 +23,7 @@ data class Video(
   val height: Int,
   val fps: Float,
   val resolution: String,
+  val networkConnectionId: Long? = null,
   val hasEmbeddedSubtitles: Boolean = false,
   val subtitleCodec:  String = "",
 )

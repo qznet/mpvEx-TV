@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -84,10 +86,11 @@ object NetworkStreamingScreen : Screen {
     val browserPreferences = koinInject<app.marlboroadvance.mpvex.preferences.BrowserPreferences>()
     var showAddSheet by remember { mutableStateOf(false) }
     var editingConnection by remember { mutableStateOf<NetworkConnection?>(null) }
+    var copyingConnection by remember { mutableStateOf<NetworkConnection?>(null) }
     val navigationBarHeight = app.marlboroadvance.mpvex.ui.browser.LocalNavigationBarHeight.current
 
-    // LazyList state for scroll tracking
-    val listState = LazyListState()
+    // LazyGrid state for scroll tracking
+    val gridState = rememberLazyGridState()
 
     // Track scroll direction to show/hide FAB
     var previousFirstVisibleItemIndex by remember { mutableIntStateOf(0) }
@@ -97,8 +100,8 @@ object NetworkStreamingScreen : Screen {
     
     val isFabVisible by remember {
       derivedStateOf {
-        val currentIndex = listState.firstVisibleItemIndex
-        val currentOffset = listState.firstVisibleItemScrollOffset
+        val currentIndex = gridState.firstVisibleItemIndex
+        val currentOffset = gridState.firstVisibleItemScrollOffset
 
         // Show FAB when at the top
         if (currentIndex == 0 && currentOffset == 0) {
@@ -154,8 +157,9 @@ object NetworkStreamingScreen : Screen {
         }
       },
     ) { padding ->
-      LazyColumn(
-        state = listState,
+      LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        state = gridState,
         modifier = Modifier
           .fillMaxSize()
           .padding(padding),
@@ -165,9 +169,11 @@ object NetworkStreamingScreen : Screen {
           top = 16.dp, 
           bottom = navigationBarHeight
         ),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
       ) {
           // Section 1: Stream Link
-          item {
+          item(span = { GridItemSpan(2) }) {
             StreamLinkSection(
               onPlayLink = { url ->
                 MediaUtils.playFile(url, context, "network_stream")
@@ -176,7 +182,7 @@ object NetworkStreamingScreen : Screen {
           }
 
           // Section 2: Local Network header
-          item {
+          item(span = { GridItemSpan(2) }) {
             Spacer(modifier = Modifier.height(24.dp))
             Text(
               text = stringResource(R.string.local_network),
@@ -189,7 +195,7 @@ object NetworkStreamingScreen : Screen {
 
           // Show empty state or connection list
           if (connections.isEmpty()) {
-            item {
+            item(span = { GridItemSpan(2) }) {
               Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -228,45 +234,53 @@ object NetworkStreamingScreen : Screen {
           } else {
             items(connections, key = { it.id }) { connection ->
               val status = connectionStatuses[connection.id]
-              NetworkConnectionCard(
-                connection = connection,
-                onConnect = { conn ->
-                  viewModel.connect(conn)
-                },
-                onDisconnect = { conn -> viewModel.disconnect(conn) },
-                onEdit = { conn -> editingConnection = conn },
-                onDelete = { conn -> viewModel.deleteConnection(conn) },
-                onBrowse = { conn ->
-                  // Navigate to browser screen if connected
-                  if (status?.isConnected == true) {
-                    backstack.add(
-                      NetworkBrowserScreen(
-                        connectionId = conn.id,
-                        connectionName = conn.name,
-                        currentPath = "/",  // Always start at root - conn.path is already included in connection
-                      ),
-                    )
-                  }
-                },
-                onAutoConnectChange = { conn, autoConnect ->
-                  viewModel.updateConnection(conn.copy(autoConnect = autoConnect))
-                },
-                isConnected = status?.isConnected ?: false,
-                isConnecting = status?.isConnecting ?: false,
-                error = status?.error,
-                modifier = Modifier.padding(bottom = 16.dp),
-              )
+              Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                NetworkConnectionCard(
+                  connection = connection,
+                  onConnect = { conn ->
+                    viewModel.connect(conn)
+                  },
+                  onDisconnect = { conn -> viewModel.disconnect(conn) },
+                  onEdit = { conn -> editingConnection = conn },
+                  onCopy = { conn -> copyingConnection = conn },
+                  onDelete = { conn -> viewModel.deleteConnection(conn) },
+                  onBrowse = { conn ->
+                    // Navigate to browser screen if connected
+                    if (status?.isConnected == true) {
+                      backstack.add(
+                        NetworkBrowserScreen(
+                          connectionId = conn.id,
+                          connectionName = conn.name,
+                          currentPath = "/",  // Always start at root - conn.path is already included in connection
+                        ),
+                      )
+                    }
+                  },
+                  onAutoConnectChange = { conn, autoConnect ->
+                    viewModel.updateConnection(conn.copy(autoConnect = autoConnect))
+                  },
+                  isConnected = status?.isConnected ?: false,
+                  isConnecting = status?.isConnecting ?: false,
+                  error = status?.error,
+                  modifier = Modifier,
+                )
+              }
             }
           }
         }
 
       // Add Connection Sheet
       AddConnectionSheet(
-        isOpen = showAddSheet,
-        onDismiss = { showAddSheet = false },
+        isOpen = showAddSheet || copyingConnection != null,
+        initialConnection = copyingConnection,
+        onDismiss = { 
+          showAddSheet = false
+          copyingConnection = null
+        },
         onSave = { connection ->
           viewModel.addConnection(connection)
           showAddSheet = false
+          copyingConnection = null
         },
       )
 

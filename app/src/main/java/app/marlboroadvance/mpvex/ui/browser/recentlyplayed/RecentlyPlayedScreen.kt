@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
@@ -31,6 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FloatingActionButtonMenu
 import androidx.compose.material3.FloatingActionButtonMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Scaffold
@@ -79,6 +81,7 @@ import app.marlboroadvance.mpvex.ui.browser.sheets.PlayLinkSheet
 import app.marlboroadvance.mpvex.ui.browser.states.EmptyState
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import app.marlboroadvance.mpvex.utils.media.MediaUtils
+import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdUtils
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import my.nanihadesuka.compose.LazyColumnScrollbar
@@ -101,6 +104,7 @@ object RecentlyPlayedScreen : Screen {
     val recentVideos by viewModel.recentVideos.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val deleteDialogOpen = rememberSaveable { mutableStateOf(false) }
+    val clearHistoryDialogOpen = rememberSaveable { mutableStateOf(false) }
     val deleteFilesCheckbox = rememberSaveable { mutableStateOf(false) }
     val advancedPreferences = koinInject<AdvancedPreferences>()
     val enableRecentlyPlayed by advancedPreferences.enableRecentlyPlayed.collectAsState()
@@ -207,6 +211,18 @@ object RecentlyPlayedScreen : Screen {
             onInvertSelection = { selectionManager.invertSelection() },
             onDeselectAll = { selectionManager.clear() },
             onDeleteClick = { deleteDialogOpen.value = true },
+            additionalActions = {
+              if (recentItems.isNotEmpty()) {
+                IconButton(
+                  onClick = { clearHistoryDialogOpen.value = true },
+                ) {
+                  Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Clear recently played",
+                  )
+                }
+              }
+            },
           )
         },
       floatingActionButton = {
@@ -265,7 +281,19 @@ object RecentlyPlayedScreen : Screen {
                 val recentlyPlayedVideos = app.marlboroadvance.mpvex.utils.history.RecentlyPlayedOps.getRecentlyPlayed(limit = 1)
                 val lastPlayed = recentlyPlayedVideos.firstOrNull()
                 if (lastPlayed != null) {
-                  MediaUtils.playFile(lastPlayed.filePath, context, "recently_played_button")
+                  val video = recentVideos.firstOrNull { it.path == lastPlayed.filePath }
+                  if (video != null) {
+                    viewModel.launchVideo(video, "recently_played_button")
+                  } else {
+                    val source = lastPlayed.networkConnectionId?.let { connectionId ->
+                      NetworkMediaIdUtils.buildMpvnasUri(
+                        connectionId = connectionId,
+                        canonicalPath = lastPlayed.filePath,
+                        displayName = lastPlayed.fileName,
+                      )
+                    } ?: lastPlayed.filePath
+                    MediaUtils.playFile(source, context, "recently_played_button")
+                  }
                 }
               }
             },
@@ -335,9 +363,9 @@ object RecentlyPlayedScreen : Screen {
             playlistRepository = playlistRepository,
             selectionManager = selectionManager,
             onVideoClick = { video ->
-              // Always play individual videos without creating a playlist
-              // regardless of playlist mode setting
-              MediaUtils.playFile(video, context, "recently_played")
+              coroutineScope.launch {
+                viewModel.launchVideo(video, "recently_played")
+              }
             },
             onPlaylistClick = { playlistItem ->
               // Navigate to playlist detail screen
@@ -403,6 +431,22 @@ object RecentlyPlayedScreen : Screen {
           onCancel = {
             deleteDialogOpen.value = false
             deleteFilesCheckbox.value = false
+          },
+        )
+      }
+
+      if (clearHistoryDialogOpen.value && !selectionManager.isInSelectionMode) {
+        ConfirmDialog(
+          title = "Clear recently played?",
+          subtitle = "This will remove all items from recently played history. Original video files will not be deleted.",
+          onConfirm = {
+            coroutineScope.launch {
+              viewModel.clearAllRecentlyPlayed()
+            }
+            clearHistoryDialogOpen.value = false
+          },
+          onCancel = {
+            clearHistoryDialogOpen.value = false
           },
         )
       }
@@ -726,4 +770,3 @@ private fun RecentItemsContent(
     }
   }
 }
-

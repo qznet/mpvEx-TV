@@ -105,6 +105,7 @@ import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import app.marlboroadvance.mpvex.utils.history.RecentlyPlayedOps
 import app.marlboroadvance.mpvex.utils.media.CopyPasteOps
 import app.marlboroadvance.mpvex.utils.media.MediaUtils
+import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdUtils
 import app.marlboroadvance.mpvex.utils.sort.SortUtils
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -115,6 +116,14 @@ import org.koin.compose.koinInject
 import java.io.File
 import kotlin.math.roundToInt
 
+private fun recentlyPlayedParentPath(filePath: String): String? {
+  val canonicalNetworkPath = NetworkMediaIdUtils.canonicalizeNetworkPath(filePath)
+  return if (canonicalNetworkPath != null && "://" in filePath) {
+    NetworkMediaIdUtils.parentPath(canonicalNetworkPath)
+  } else {
+    File(filePath).parent
+  }
+}
 
 @Serializable
 data class VideoListScreen(
@@ -317,11 +326,20 @@ data class VideoListScreen(
                   val folderPath = sortedVideosWithInfo.firstOrNull()?.video?.path?.let { File(it).parent } ?: ""
                   val recentlyPlayedVideos = RecentlyPlayedOps.getRecentlyPlayed(limit = 100)
                   val lastPlayedInFolder = recentlyPlayedVideos.firstOrNull {
-                    File(it.filePath).parent == folderPath
+                    recentlyPlayedParentPath(it.filePath) == folderPath
                   }
 
                   if (lastPlayedInFolder != null) {
-                    MediaUtils.playFile(lastPlayedInFolder.filePath, context, "recently_played_button")
+                    val playablePath = if (lastPlayedInFolder.networkConnectionId != null) {
+                      NetworkMediaIdUtils.buildMpvnasUri(
+                        connectionId = lastPlayedInFolder.networkConnectionId,
+                        canonicalPath = lastPlayedInFolder.filePath,
+                        displayName = lastPlayedInFolder.fileName,
+                      ).toString()
+                    } else {
+                      lastPlayedInFolder.filePath
+                    }
+                    MediaUtils.playFile(playablePath, context, "recently_played_button")
                   } else {
                     MediaUtils.playFile(sortedVideosWithInfo.first().video, context, "first_video_button")
                   }

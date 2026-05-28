@@ -81,7 +81,7 @@ fun EditConnectionSheet(
 
   AlertDialog(
     onDismissRequest = handleDismiss,
-    modifier = Modifier.widthIn(min = 400.dp, max = 600.dp),
+    modifier = Modifier.widthIn(min = 320.dp, max = 400.dp),
     title = {
       Text(
         text = "Edit Connection",

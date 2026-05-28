@@ -1,6 +1,7 @@
 package app.marlboroadvance.mpvex.ui.player
 
 import android.util.Log
+import app.marlboroadvance.mpvex.database.entities.NetworkTrackProfileEntity
 import app.marlboroadvance.mpvex.preferences.AudioPreferences
 import app.marlboroadvance.mpvex.preferences.SubtitlesPreferences
 import `is`.xyz.mpv.MPVLib
@@ -50,9 +51,11 @@ class TrackSelector(
     @Volatile var lastManualAudioLang: String? = null
     @Volatile var lastManualAudioTitle: String? = null
     @Volatile var lastManualAudioId: Int? = null
+    @Volatile var lastManualAudioTrackNumber: Int? = null
     @Volatile var lastManualSubLang: String? = null
     @Volatile var lastManualSubTitle: String? = null
     @Volatile var lastManualSubId: Int? = null
+    @Volatile var lastManualSubTrackNumber: Int? = null
     @Volatile var lastManualSubIsExternal: Boolean? = null
   }
 
@@ -60,6 +63,7 @@ class TrackSelector(
   private data class Track(
     val id: Int,
     val type: String,
+    val trackNumber: Int,
     val lang: String,
     val title: String,
     val isDefault: Boolean,
@@ -111,9 +115,11 @@ class TrackSelector(
         lastManualAudioLang = selectedAudio.lang
         lastManualAudioTitle = selectedAudio.title
         lastManualAudioId = selectedAudio.id
+        lastManualAudioTrackNumber = selectedAudio.trackNumber
         Log.d(TAG, "Saved last selected audio track: lang=${selectedAudio.lang}, title=${selectedAudio.title}, id=${selectedAudio.id}")
       } else if (currentAid == -1) {
         lastManualAudioId = -1
+        lastManualAudioTrackNumber = null
         lastManualAudioLang = null
         lastManualAudioTitle = null
       }
@@ -122,10 +128,12 @@ class TrackSelector(
         lastManualSubLang = selectedSub.lang
         lastManualSubTitle = selectedSub.title
         lastManualSubId = selectedSub.id
+        lastManualSubTrackNumber = selectedSub.trackNumber
         lastManualSubIsExternal = selectedSub.external
         Log.d(TAG, "Saved last selected sub track: lang=${selectedSub.lang}, title=${selectedSub.title}, id=${selectedSub.id}, external=${selectedSub.external}")
       } else if (currentSid == -1) {
         lastManualSubId = -1
+        lastManualSubTrackNumber = null
         lastManualSubLang = null
         lastManualSubTitle = null
         lastManualSubIsExternal = null
@@ -135,16 +143,85 @@ class TrackSelector(
     }
   }
 
+  fun hydrateFromProfile(profile: NetworkTrackProfileEntity) {
+    lastManualAudioTrackNumber = profile.audioTrackNumber
+    lastManualAudioLang = profile.audioLang?.lowercase()
+    lastManualAudioTitle = profile.audioTitle?.lowercase()
+    lastManualAudioId = null
+
+    lastManualSubTrackNumber = profile.subtitleTrackNumber
+    lastManualSubLang = profile.subtitleLang?.lowercase()
+    lastManualSubTitle = profile.subtitleTitle?.lowercase()
+    lastManualSubId = if (profile.subtitleMode == "off") -1 else null
+    lastManualSubIsExternal = profile.subtitleIsExternal
+  }
+
+  fun resetManualSelectionMemory() {
+    lastManualAudioLang = null
+    lastManualAudioTitle = null
+    lastManualAudioId = null
+    lastManualAudioTrackNumber = null
+    lastManualSubLang = null
+    lastManualSubTitle = null
+    lastManualSubId = null
+    lastManualSubTrackNumber = null
+    lastManualSubIsExternal = null
+  }
+
+  fun buildProfile(connectionId: Long, directoryPath: String): NetworkTrackProfileEntity? {
+    return try {
+      val trackCount = MPVLib.getPropertyInt("track-list/count") ?: 0
+      if (trackCount == 0) return null
+      val tracks = readTracks(trackCount)
+      val currentAid = MPVLib.getPropertyInt("aid") ?: -1
+      val currentSidRaw = MPVLib.getPropertyString("sid")
+      val currentSid = MPVLib.getPropertyInt("sid") ?: -1
+
+      val selectedAudio = tracks.find { it.type == "audio" && it.id == currentAid }
+      val selectedSub = tracks.find { it.type == "sub" && it.id == currentSid }
+      val subtitleMode = when {
+        currentSidRaw == null || currentSidRaw == "no" || currentSid <= 0 -> "off"
+        selectedSub?.external == true -> "external"
+        selectedSub != null -> "internal"
+        else -> "unset"
+      }
+
+      NetworkTrackProfileEntity(
+        connectionId = connectionId,
+        directoryPath = directoryPath,
+        audioTrackNumber = selectedAudio?.trackNumber,
+        audioLang = selectedAudio?.lang,
+        audioTitle = selectedAudio?.title,
+        subtitleMode = subtitleMode,
+        subtitleTrackNumber = selectedSub?.trackNumber,
+        subtitleLang = selectedSub?.lang,
+        subtitleTitle = selectedSub?.title,
+        subtitleIsExternal = selectedSub?.external,
+      )
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to build network track profile", e)
+      null
+    }
+  }
+
   private fun readTracks(count: Int): List<Track> {
     val list = mutableListOf<Track>()
+    var audioTrackNumber = 0
+    var subtitleTrackNumber = 0
     for (i in 0 until count) {
       val id = MPVLib.getPropertyInt("track-list/$i/id") ?: continue
       val type = MPVLib.getPropertyString("track-list/$i/type") ?: continue
+      val trackNumber = when (type) {
+        "audio" -> ++audioTrackNumber
+        "sub" -> ++subtitleTrackNumber
+        else -> 0
+      }
 
       list.add(
         Track(
           id = id,
           type = type,
+          trackNumber = trackNumber,
           lang = (MPVLib.getPropertyString("track-list/$i/lang") ?: "").lowercase(),
           title = (MPVLib.getPropertyString("track-list/$i/title") ?: "").lowercase(),
           isDefault = MPVLib.getPropertyBoolean("track-list/$i/default") ?: false,
@@ -223,6 +300,16 @@ class TrackSelector(
         Log.d(TAG, "Smart Audio: Restoring manual 'audio off' state from session")
         MPVLib.setPropertyString("aid", "no")
         return
+      }
+
+      val manualAudioTrackNumber = lastManualAudioTrackNumber
+      if (manualAudioTrackNumber != null && manualAudioTrackNumber > 0) {
+        val match = audioTracks.find { it.trackNumber == manualAudioTrackNumber }
+        if (match != null) {
+          Log.d(TAG, "Smart Audio: Inheriting session choice by track number (id=${match.id})")
+          MPVLib.setPropertyInt("aid", match.id)
+          return
+        }
       }
 
       if (lastManualAudioLang != null) {
@@ -321,6 +408,16 @@ class TrackSelector(
         Log.d(TAG, "Smart Sub: Restoring manual 'subtitles off' state from session")
         MPVLib.setPropertyString("sid", "no")
         return
+      }
+
+      val manualSubTrackNumber = lastManualSubTrackNumber
+      if (manualSubTrackNumber != null && manualSubTrackNumber > 0) {
+        val match = subTracks.find { it.trackNumber == manualSubTrackNumber }
+        if (match != null) {
+          Log.d(TAG, "Smart Sub: Inheriting session choice by track number (id=${match.id})")
+          MPVLib.setPropertyInt("sid", match.id)
+          return
+        }
       }
 
       if (lastManualSubIsExternal == true) {

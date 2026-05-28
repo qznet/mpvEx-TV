@@ -97,17 +97,22 @@ class MPVView(
   override fun initOptions() {
     val profile = decoderPreferences.profile.get()
     MPVLib.setOptionString("profile", profile)
-    setVo(if (decoderPreferences.gpuNext.get()) "gpu-next" else "gpu")
+    val useVulkan = decoderPreferences.useVulkan.get()
+    val useGpuNext = useVulkan || decoderPreferences.gpuNext.get()
+    setVo(if (useGpuNext) "gpu-next" else "gpu")
     
     // Set GPU API context (Vulkan or OpenGL)
-    if (decoderPreferences.useVulkan.get()) {
+    if (useVulkan) {
+      MPVLib.setOptionString("gpu-api", "vulkan")
       MPVLib.setOptionString("gpu-context", "androidvk")
     }
 
-    // Set hwdec with fallback order: HW+ (mediacodec) -> HW (mediacodec-copy) -> SW (no)
+    // Default to copy-back decoding on Android. This is slower on paper than
+    // direct mediacodec, but materially more stable than the zero-copy
+    // AImageReader path for problematic HEVC/HDR content on many devices.
     MPVLib.setOptionString(
       "hwdec",
-      if (decoderPreferences.tryHWDecoding.get()) "mediacodec,mediacodec-copy,no" else "no",
+      if (decoderPreferences.tryHWDecoding.get()) "auto-copy" else "no",
     )
     MPVLib.setOptionString("hwdec-codecs", "all")
 
@@ -115,10 +120,19 @@ class MPVView(
       MPVLib.setOptionString("vf", "format=yuv420p")
     }
     
-    // Cap demuxer cache for mobile to prevent memory issues
-    val cacheMegs = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) 64 else 32
+    // Cap demuxer cache for mobile to prevent memory issues.
+    // gpu-next on Android benefits from a slightly deeper queue to reduce
+    // AImageReader timeout spikes when the decoder/render threads jitter.
+    val cacheMegs = when {
+      useGpuNext && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 -> 128
+      android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 -> 64
+      else -> 32
+    }
     MPVLib.setOptionString("demuxer-max-bytes", "${cacheMegs * 1024 * 1024}")
     MPVLib.setOptionString("demuxer-max-back-bytes", "${cacheMegs * 1024 * 1024}")
+    if (useGpuNext) {
+      configureGpuNextTimingBuffer()
+    }
     
     val logLevel = if (advancedPreferences.verboseLogging.get()) "v" else "warn"
     MPVLib.setOptionString("msg-level", "all=$logLevel")
@@ -149,6 +163,22 @@ class MPVView(
 
     setupSubtitlesOptions()
     setupAudioOptions()
+  }
+
+  private fun configureGpuNextTimingBuffer() {
+    // Relax sync pressure on Android. This keeps playback paced to audio
+    // instead of tighter display resampling behavior, which is more prone
+    // to frame starvation with mediacodec + AImageReader.
+    MPVLib.setOptionString("video-sync", "audio")
+    MPVLib.setOptionString("interpolation", "no")
+
+    // Increase read-ahead and allow mpv to build a healthier queue before
+    // resuming when buffer health drops.
+    MPVLib.setOptionString("cache", "yes")
+    MPVLib.setOptionString("demuxer-readahead-secs", "20")
+    MPVLib.setOptionString("cache-secs", "20")
+    MPVLib.setOptionString("cache-pause", "yes")
+    MPVLib.setOptionString("cache-pause-wait", "3")
   }
 
   override fun observeProperties() {

@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
@@ -84,7 +84,7 @@ data class NetworkBrowserScreen(
     // Selection manager
     val selectionManager =
       rememberSelectionManager(
-        items = files.filter { !it.isDirectory && it.mimeType?.startsWith("video/") == true },
+        items = files.filter { it.isDirectory || it.mimeType?.startsWith("video/") == true },
         getId = { it.path },
         onDeleteItems = { items, _ -> viewModel.deleteFiles(items) },
         onOperationComplete = { viewModel.loadFiles() },
@@ -109,7 +109,7 @@ data class NetworkBrowserScreen(
           title = connectionName,
           isInSelectionMode = selectionManager.isInSelectionMode,
           selectedCount = selectionManager.selectedCount,
-          totalCount = files.count { !it.isDirectory && it.mimeType?.startsWith("video/") == true },
+          totalCount = files.count { it.isDirectory || it.mimeType?.startsWith("video/") == true },
           onBackClick = {
             if (selectionManager.isInSelectionMode) {
               selectionManager.clear()
@@ -173,7 +173,7 @@ data class NetworkBrowserScreen(
           isOpen = deleteDialogOpen.value,
           onDismiss = { deleteDialogOpen.value = false },
           onConfirm = { selectionManager.deleteSelected() },
-          itemType = "video",
+          itemType = "item",
           itemCount = selectionManager.selectedCount,
           itemNames = selectionManager.getSelectedItems().map { it.name },
         )
@@ -249,7 +249,7 @@ private fun NetworkBrowserContent(
     else -> {
       val folders = files.filter { it.isDirectory }
       val videos = files.filter { !it.isDirectory && it.mimeType?.startsWith("video/") == true }
-      val networkListState = LazyListState()
+      val networkListState = rememberLazyListState()
 
       // Check if at top of list to hide scrollbar during pull-to-refresh
       val isAtTop by remember {
@@ -314,6 +314,8 @@ private fun NetworkBrowserContent(
                   NetworkFolderCard(
                     file = folder,
                     onClick = { onFolderClick(folder) },
+                    onLongClick = { onVideoLongClick(folder) },
+                    isSelected = selectionManager.isSelected(folder),
                     modifier = Modifier,
                   )
                 }

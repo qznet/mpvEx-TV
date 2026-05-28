@@ -109,6 +109,7 @@ import app.marlboroadvance.mpvex.ui.browser.states.PermissionDeniedState
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import app.marlboroadvance.mpvex.utils.media.CopyPasteOps
 import app.marlboroadvance.mpvex.utils.media.MediaUtils
+import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdUtils
 import app.marlboroadvance.mpvex.utils.permission.PermissionUtils
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionStatus
@@ -750,7 +751,16 @@ fun FileSystemBrowserScreen(path: String? = null) {
                   val recentlyPlayedVideos = app.marlboroadvance.mpvex.utils.history.RecentlyPlayedOps.getRecentlyPlayed(limit = 1)
                   val lastPlayed = recentlyPlayedVideos.firstOrNull()
                   if (lastPlayed != null) {
-                    MediaUtils.playFile(lastPlayed.filePath, context, "recently_played_button")
+                    val playablePath = if (lastPlayed.networkConnectionId != null) {
+                      NetworkMediaIdUtils.buildMpvnasUri(
+                        connectionId = lastPlayed.networkConnectionId,
+                        canonicalPath = lastPlayed.filePath,
+                        displayName = lastPlayed.fileName,
+                      ).toString()
+                    } else {
+                      lastPlayed.filePath
+                    }
+                    MediaUtils.playFile(playablePath, context, "recently_played_button")
                   }
                 }
               },

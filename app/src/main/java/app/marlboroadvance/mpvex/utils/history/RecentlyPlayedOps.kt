@@ -27,17 +27,11 @@ object RecentlyPlayedOps {
     width: Int = 0,
     height: Int = 0,
     launchSource: String? = null,
+    networkConnectionId: Long? = null,
     playlistId: Int? = null,
   ) {
     // Check if recently played feature is enabled
     if (!preferences.enableRecentlyPlayed.get()) return
-
-    val uri = Uri.parse(filePath)
-
-    if (uri.scheme != "mpvnas") {
-      if (uri.scheme in listOf("smb", "ftp", "ftps", "webdav", "webdavs")) return
-      if (uri.host?.lowercase() in listOf("127.0.0.1", "localhost", "0.0.0.0")) return
-    }
 
     repository.addRecentlyPlayed(
       filePath,
@@ -48,6 +42,7 @@ object RecentlyPlayedOps {
       width,
       height,
       launchSource,
+      networkConnectionId,
       playlistId,
     )
   }

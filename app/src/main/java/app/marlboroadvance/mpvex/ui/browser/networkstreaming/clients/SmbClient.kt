@@ -3,6 +3,7 @@ package app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients
 import android.net.Uri
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
+import com.hierynomus.msfscc.fileinformation.FileBasicInformation
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
@@ -203,12 +204,38 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
       try {
         if (!isConnected()) connect().getOrThrow()
         val ds = diskShare ?: return@withContext Result.failure(Exception("Not connected"))
-        ds.rm(getRelativePath(path))
+        val relativePath = getRelativePath(path)
+        
+        val isDirectory = ds.folderExists(relativePath)
+        deleteRecursive(ds, relativePath, isDirectory)
+        
         Result.success(Unit)
       } catch (e: Exception) {
         Result.failure(e)
       }
     }
+
+  private fun deleteRecursive(ds: DiskShare, relativePath: String, isDirectory: Boolean) {
+    // Clear attributes to normal first (helpful for Read-only items)
+    try {
+      // 0x80L is FILE_ATTRIBUTE_NORMAL
+      ds.setFileInformation(relativePath, FileBasicInformation(null, null, null, null, 0x80L))
+    } catch (_: Exception) {}
+
+    if (isDirectory) {
+      ds.list(relativePath).forEach { fileInfo ->
+        val name = fileInfo.fileName
+        if (name != "." && name != "..") {
+          val subPath = if (relativePath.isEmpty()) name else "$relativePath\\$name"
+          val isSubDir = (fileInfo.fileAttributes and 0x10L) != 0L
+          deleteRecursive(ds, subPath, isSubDir)
+        }
+      }
+      ds.rmdir(relativePath, false) // false because we already cleared children
+    } else {
+      ds.rm(relativePath)
+    }
+  }
 
   private fun getMimeType(fileName: String): String? {
     val extension = fileName.substringAfterLast('.', "").lowercase()

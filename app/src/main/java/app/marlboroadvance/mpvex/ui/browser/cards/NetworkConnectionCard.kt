@@ -1,5 +1,6 @@
 package app.marlboroadvance.mpvex.ui.browser.cards
 
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
@@ -35,6 +37,7 @@ fun NetworkConnectionCard(
   onConnect: (NetworkConnection) -> Unit,
   onDisconnect: (NetworkConnection) -> Unit,
   onEdit: (NetworkConnection) -> Unit,
+  onCopy: (NetworkConnection) -> Unit,
   onDelete: (NetworkConnection) -> Unit,
   onBrowse: (NetworkConnection) -> Unit,
   onAutoConnectChange: (NetworkConnection, Boolean) -> Unit,
@@ -44,7 +47,9 @@ fun NetworkConnectionCard(
   error: String? = null,
 ) {
   Card(
-    modifier = modifier.fillMaxWidth(),
+    modifier = modifier
+      .fillMaxWidth()
+      .widthIn(max = 500.dp),
     colors = CardDefaults.cardColors(
       containerColor = MaterialTheme.colorScheme.surfaceContainer,
     ),
@@ -52,7 +57,7 @@ fun NetworkConnectionCard(
     Column(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(16.dp),
+        .padding(12.dp),
     ) {
       // Header with name and actions
       Row(
@@ -75,6 +80,13 @@ fun NetworkConnectionCard(
         }
 
         Row {
+          IconButton(onClick = { onCopy(connection) }) {
+            Icon(
+              Icons.Filled.ContentCopy,
+              contentDescription = "Copy",
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
           IconButton(onClick = { onEdit(connection) }) {
             Icon(
               Icons.Filled.Edit,
@@ -125,7 +137,7 @@ fun NetworkConnectionCard(
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(top = 12.dp),
+          .padding(top = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Checkbox(
@@ -133,9 +145,10 @@ fun NetworkConnectionCard(
           onCheckedChange = { checked ->
             onAutoConnectChange(connection, checked)
           },
+          modifier = Modifier.size(32.dp).padding(end = 4.dp)
         )
         Text(
-          text = "Connect automatically on app launch",
+          text = "Auto-connect",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -145,7 +158,7 @@ fun NetworkConnectionCard(
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(top = 12.dp),
+          .padding(top = 8.dp),
         horizontalArrangement = Arrangement.End,
       ) {
         when {

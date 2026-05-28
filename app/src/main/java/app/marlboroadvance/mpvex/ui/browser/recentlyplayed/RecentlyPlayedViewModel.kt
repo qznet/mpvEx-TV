@@ -1,6 +1,7 @@
 package app.marlboroadvance.mpvex.ui.browser.recentlyplayed
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -13,7 +14,14 @@ import app.marlboroadvance.mpvex.database.entities.RecentlyPlayedEntity
 import app.marlboroadvance.mpvex.database.repository.PlaylistRepository
 import app.marlboroadvance.mpvex.database.repository.VideoMetadataCacheRepository
 import app.marlboroadvance.mpvex.domain.media.model.Video
+import app.marlboroadvance.mpvex.domain.network.NetworkConnection
+import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
 import app.marlboroadvance.mpvex.domain.recentlyplayed.repository.RecentlyPlayedRepository
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkStreamingProvider
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+import app.marlboroadvance.mpvex.ui.player.PlayerActivity
+import app.marlboroadvance.mpvex.utils.media.MediaUtils
+import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdUtils
 import app.marlboroadvance.mpvex.utils.permission.PermissionUtils
 
 
@@ -123,6 +131,11 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
           filePath.startsWith("https://", ignoreCase = true) ||
           filePath.startsWith("rtmp://", ignoreCase = true) ||
           filePath.startsWith("rtsp://", ignoreCase = true) ||
+          filePath.startsWith("smb://", ignoreCase = true) ||
+          filePath.startsWith("ftp://", ignoreCase = true) ||
+          filePath.startsWith("ftps://", ignoreCase = true) ||
+          filePath.startsWith("webdav://", ignoreCase = true) ||
+          filePath.startsWith("webdavs://", ignoreCase = true) ||
           filePath.startsWith("mpvnas://", ignoreCase = true)
 
         // Skip any kind of streaming playlist entries
@@ -157,7 +170,7 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
       val videos = sortedItems.filterIsInstance<RecentlyPlayedItem.VideoItem>().map { it.video }
       _recentVideos.value = videos
     } catch (e: Exception) {
-      Log.e("RecentlyPlayedViewModel", "Error loading recent videos", e)
+      Log.e(TAG, "Error loading recent videos", e)
       _recentItems.value = emptyList()
       _recentVideos.value = emptyList()
     } finally {
@@ -234,7 +247,7 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
         resolution = formatResolution(width, height),
       )
     } catch (e: Exception) {
-      Log.e("RecentlyPlayedViewModel", "Error creating video from path: $filePath", e)
+      Log.e(TAG, "Error creating video from path: $filePath", e)
       null
     }
   }
@@ -247,11 +260,39 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
     parsedVideoTitle: String?,
     entity: RecentlyPlayedEntity?,
   ): Video {
-    // Extract URI components
     val uri = Uri.parse(url)
+    val canonicalNetworkPath = if (uri.scheme.equals("mpvnas", ignoreCase = true)) {
+      NetworkMediaIdUtils.parseMpvnasUri(uri)?.canonicalPath
+    } else {
+      NetworkMediaIdUtils.canonicalizeNetworkPath(url)
+    } ?: url
+    val canonicalUri = Uri.parse(canonicalNetworkPath)
+    val networkConnectionId = entity?.networkConnectionId
+      ?: inferNetworkConnectionId(canonicalNetworkPath)
+
+    val playableUri = if (networkConnectionId != null) {
+      NetworkMediaIdUtils.buildMpvnasUri(
+        connectionId = networkConnectionId,
+        canonicalPath = canonicalNetworkPath,
+        displayName = entity?.fileName,
+      )
+    } else {
+      uri
+    }
     
     // Use parsed title from database if available, otherwise fallback to URI path
-    val videoTitle = parsedVideoTitle ?: uri.lastPathSegment ?: "Stream"
+    // Decodes URL-encoded filenames to clean up gibberish/corrupted paths for network streams
+    val dbTitle = entity?.videoTitle?.takeUnless(::looksLikeProxyStreamTitle)
+    val parsedTitle = parsedVideoTitle?.takeUnless(::looksLikeProxyStreamTitle)
+    val rawTitle = entity?.fileName
+      ?: parsedTitle
+      ?: dbTitle
+      ?: NetworkMediaIdUtils.fileNameFromPath(canonicalNetworkPath)
+    val videoTitle = try {
+      java.net.URLDecoder.decode(rawTitle, "UTF-8")
+    } catch (e: Exception) {
+      rawTitle
+    }
     val displayName = videoTitle
     
     // Use metadata from entity if available
@@ -265,21 +306,18 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
     val dateAdded = dateModified
     
     // Use host as bucket ID (grouping by domain)
-    val bucketId = (uri.host ?: "network").hashCode().toString()
-    var bucketDisplayName = uri.host ?: "Network Streams"
+    val bucketId = (canonicalUri.host ?: "network").hashCode().toString()
+    var bucketDisplayName = canonicalUri.host ?: "Network Streams"
 
-    if (uri.scheme == "mpvnas") {
-      val connectionId = uri.host?.toLongOrNull()
-      if (connectionId != null) {
-        val connection = networkRepository.getConnectionById(connectionId)
-        if (connection != null) {
-          bucketDisplayName = connection.name
-        }
+    if (networkConnectionId != null) {
+      val connection = networkRepository.getConnectionById(networkConnectionId)
+      if (connection != null) {
+        bucketDisplayName = connection.name
       }
     }
     
     // Determine mime type based on URL extension, default to generic video
-    val extension = uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() ?: ""
+    val extension = canonicalUri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() ?: ""
     val mimeType = when (extension) {
       "mp4" -> "video/mp4"
       "mkv" -> "video/x-matroska"
@@ -294,8 +332,8 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
       id = url.hashCode().toLong(),
       title = videoTitle,
       displayName = displayName,
-      path = url,
-      uri = uri,
+      path = canonicalNetworkPath,
+      uri = playableUri,
       duration = duration,
       durationFormatted = formatDuration(duration),
       size = size,
@@ -309,7 +347,111 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
       height = height,
       fps = 0f, // Network videos typically don't have fps metadata stored
       resolution = formatResolution(width, height),
+      networkConnectionId = networkConnectionId,
     )
+  }
+
+  private fun looksLikeProxyStreamTitle(value: String?): Boolean {
+    if (value.isNullOrBlank()) return false
+    return Regex("""^\d+_\d{10,}$""").matches(value) ||
+      Regex("""^_?\d{10,}$""").matches(value)
+  }
+
+  private suspend fun inferNetworkConnectionId(canonicalNetworkPath: String): Long? {
+    val uri = runCatching { Uri.parse(canonicalNetworkPath) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase() ?: return null
+    val host = uri.host?.lowercase() ?: return null
+    val connections = networkRepository.getAllConnectionsList()
+
+    return when (scheme) {
+      "smb" -> {
+        val shareName = uri.pathSegments.firstOrNull()?.lowercase() ?: return null
+        connections.firstOrNull { connection ->
+          connection.protocol.name.equals("SMB", ignoreCase = true) &&
+            connection.host.lowercase() == host &&
+            connection.path.trim('/').lowercase() == shareName
+        }?.id
+      }
+
+      "ftp", "ftps" -> {
+        connections.firstOrNull { connection ->
+          connection.protocol.name.equals("FTP", ignoreCase = true) &&
+            connection.host.lowercase() == host &&
+            canonicalNetworkPath.startsWith(
+              NetworkMediaIdUtils.canonicalizeNetworkPath(
+                "$scheme://${connection.host}${if (connection.port > 0 && connection.port != 21) ":${connection.port}" else ""}${connection.path}",
+              ) ?: "",
+              ignoreCase = true,
+            )
+        }?.id
+      }
+
+      "webdav", "webdavs", "http", "https" -> {
+        connections.firstOrNull { connection ->
+          connection.protocol.name.equals("WEBDAV", ignoreCase = true) &&
+            connection.host.lowercase() == host
+        }?.id
+      }
+
+      else -> null
+    }
+  }
+
+  suspend fun launchVideo(video: Video, launchSource: String) {
+    val connectionId = video.networkConnectionId
+    if (connectionId == null) {
+      val app = getApplication<Application>()
+      MediaUtils.playFile(video, app, launchSource)
+      return
+    }
+
+    val connection = networkRepository.getConnectionById(connectionId)
+    if (connection == null) {
+      Log.w(TAG, "Network connection not found for history replay: id=$connectionId path=${video.path}")
+      val app = getApplication<Application>()
+      MediaUtils.playFile(video, app, launchSource)
+      return
+    }
+
+    val canonicalPath = NetworkMediaIdUtils.canonicalizeNetworkPath(video.path) ?: video.path
+    val useProxy = connection.protocol in PROXY_PROTOCOLS
+    val uri = if (useProxy) {
+      val proxy = NetworkStreamingProxy.getInstance()
+      val streamId = "${connectionId}_${System.currentTimeMillis()}"
+      val proxyUrl = proxy.registerStream(
+        streamId = streamId,
+        connection = connection,
+        filePath = canonicalPath,
+        fileSize = video.size,
+        mimeType = video.mimeType,
+        title = video.displayName,
+      )
+      Uri.parse(proxyUrl)
+    } else {
+      NetworkStreamingProvider.setConnection(connectionId, connection)
+      NetworkStreamingProvider.getUri(getApplication(), connectionId, canonicalPath)
+    }
+
+    val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+      setClass(getApplication(), PlayerActivity::class.java)
+      putExtra("internal_launch", true)
+      putExtra("launch_source", launchSource)
+      putExtra("title", video.displayName)
+      putExtra("filename", video.displayName)
+      putExtra("network_file_path", canonicalPath)
+      putExtra("network_connection_id", connectionId)
+      setDataAndType(uri, video.mimeType.ifBlank { "video/*" })
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      if (!useProxy) {
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+    }
+
+    Log.d(
+      TAG,
+      "Launching history replay using network browser flow: connectionId=$connectionId path=$canonicalPath uri=$uri title=${video.displayName}",
+    )
+    getApplication<Application>().startActivity(intent)
   }
 
   // Basic video creation function removed as it's no longer used
@@ -340,6 +482,11 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
               video.path.startsWith("https://", ignoreCase = true) ||
               video.path.startsWith("rtmp://", ignoreCase = true) ||
               video.path.startsWith("rtsp://", ignoreCase = true) ||
+              video.path.startsWith("smb://", ignoreCase = true) ||
+              video.path.startsWith("ftp://", ignoreCase = true) ||
+              video.path.startsWith("ftps://", ignoreCase = true) ||
+              video.path.startsWith("webdav://", ignoreCase = true) ||
+              video.path.startsWith("webdavs://", ignoreCase = true) ||
               video.path.startsWith("mpvnas://", ignoreCase = true)
 
             if (!isNetworkUri) {
@@ -479,6 +626,13 @@ class RecentlyPlayedViewModel(application: Application) : AndroidViewModel(appli
 
   
   companion object {
+    private const val TAG = "RecentlyPlayedViewModel"
+    private val PROXY_PROTOCOLS = setOf(
+      NetworkProtocol.SMB,
+      NetworkProtocol.FTP,
+      NetworkProtocol.WEBDAV,
+    )
+
     fun factory(application: Application): ViewModelProvider.Factory = viewModelFactory {
       initializer {
         RecentlyPlayedViewModel(application)

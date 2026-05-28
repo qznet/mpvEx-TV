@@ -18,6 +18,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
 import android.view.KeyEvent
@@ -35,18 +36,22 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
+import app.marlboroadvance.mpvex.database.entities.NetworkTrackProfileEntity
 import app.marlboroadvance.mpvex.database.entities.PlaybackStateEntity
+import app.marlboroadvance.mpvex.database.repository.NetworkTrackProfileRepository
 import app.marlboroadvance.mpvex.databinding.PlayerLayoutBinding
 import app.marlboroadvance.mpvex.domain.playbackstate.repository.PlaybackStateRepository
 import app.marlboroadvance.mpvex.preferences.AdvancedPreferences
 import app.marlboroadvance.mpvex.preferences.AudioPreferences
 import app.marlboroadvance.mpvex.preferences.BrowserPreferences
+import app.marlboroadvance.mpvex.preferences.DecoderPreferences
 import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import app.marlboroadvance.mpvex.preferences.SubtitlesPreferences
 import app.marlboroadvance.mpvex.ui.player.controls.PlayerControls
 import app.marlboroadvance.mpvex.ui.theme.MpvexTheme
 import app.marlboroadvance.mpvex.utils.history.RecentlyPlayedOps
 import app.marlboroadvance.mpvex.utils.media.HttpUtils
+import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdUtils
 import app.marlboroadvance.mpvex.utils.media.SubtitleOps
 import app.marlboroadvance.mpvex.utils.storage.FileTypeUtils
 import app.marlboroadvance.mpvex.utils.storage.FileFilterUtils
@@ -115,6 +120,11 @@ class PlayerActivity :
   private val playlistRepository: app.marlboroadvance.mpvex.database.repository.PlaylistRepository by inject()
 
   /**
+   * Repository for persisting per-directory network track preferences.
+   */
+  private val networkTrackProfileRepository: NetworkTrackProfileRepository by inject()
+
+  /**
    * Preferences for player settings.
    */
   private val playerPreferences: PlayerPreferences by inject()
@@ -138,6 +148,11 @@ class PlayerActivity :
    * Preferences for browser settings.
    */
   private val browserPreferences: BrowserPreferences by inject()
+
+  /**
+   * Preferences for decoder/rendering settings.
+   */
+  private val decoderPreferences: DecoderPreferences by inject()
 
   /**
    * Repository for managing network connections.
@@ -415,6 +430,9 @@ class PlayerActivity :
     if (isMpvnas) {
       intent.data = dataUri
       lifecycleScope.launch(Dispatchers.Main) {
+        val traceId = "launch_${System.currentTimeMillis()}_${dataUri?.hashCode()}"
+        val launchStartedAt = SystemClock.elapsedRealtime()
+        Log.d(TAG, "SMB trace[$traceId] onCreate mpvnas launch start uri=$dataUri")
         val resolvedUri = withContext(Dispatchers.IO) {
           dataUri?.let { resolveMpvnasUri(it) }
         }
@@ -436,7 +454,15 @@ class PlayerActivity :
           }
 
           setHttpHeadersFromExtras(intent.extras)
-          getPlayableUri(intent)?.let(player::playFile)
+          val playableUri = getPlayableUri(intent)
+          Log.d(
+            TAG,
+            "SMB trace[$traceId] onCreate resolved playableUri=$playableUri totalBeforePlay=${SystemClock.elapsedRealtime() - launchStartedAt}ms",
+          )
+          playableUri?.let { uri ->
+            Log.d(TAG, "MPV dispatch[player.playFile] uri=$uri")
+            player.playFile(uri)
+          }
         } else {
           Log.e(TAG, "Failed to resolve mpvnas URI: ${intent.data}")
           finish()
@@ -740,6 +766,7 @@ class PlayerActivity :
 
       // OPTIMIZATION: Stop playback immediately if finishing to reduce cleanup overhead
       if (isFinishing && !isManualBackgroundPlayback) {
+        saveVideoPlaybackState(fileName)
         viewModel.pause()
         // Tell MPV to stop processing to reduce busywork during cleanup
         MPVLib.command("stop")
@@ -1325,6 +1352,15 @@ class PlayerActivity :
     // First check if a custom title/filename was provided via intent extras
     intent.getStringExtra("title")?.let { return it }
     intent.getStringExtra("filename")?.let { return it }
+    val mpvnasDisplayName = extractUriFromIntent(intent)
+      ?.takeIf { it.scheme.equals("mpvnas", ignoreCase = true) }
+      ?.let { NetworkMediaIdUtils.parseMpvnasUri(it)?.displayName }
+    if (!mpvnasDisplayName.isNullOrBlank()) return mpvnasDisplayName
+
+    intent.getStringExtra("network_file_path")
+      ?.let(NetworkMediaIdUtils::fileNameFromPath)
+      ?.takeIf { it.isNotBlank() && it != "Network Stream" }
+      ?.let { return it }
 
     val uri = extractUriFromIntent(intent) ?: return ""
 
@@ -1343,6 +1379,11 @@ class PlayerActivity :
    * @return The extracted filename
    */
   private fun extractFileNameFromUri(uri: Uri): String {
+    if (uri.scheme.equals("mpvnas", ignoreCase = true)) {
+      val ref = NetworkMediaIdUtils.parseMpvnasUri(uri)
+      return ref?.displayName ?: NetworkMediaIdUtils.fileNameFromPath(ref?.canonicalPath)
+    }
+
     // For HTTP/HTTPS URLs, extract from path (will be updated async via HTTP headers)
     if (HttpUtils.isNetworkStream(uri)) {
       // Check if it's a proxy stream
@@ -1352,6 +1393,11 @@ class PlayerActivity :
         if (proxyTitle != null) {
           return proxyTitle
         }
+        intent.getStringExtra("network_file_path")
+          ?.let(NetworkMediaIdUtils::fileNameFromPath)
+          ?.takeIf { it.isNotBlank() && it != "Network Stream" }
+          ?.let { return it }
+        return "Network Stream"
       }
 
       // Get the last path segment and decode URL encoding
@@ -1751,6 +1797,7 @@ class PlayerActivity :
     viewModel.clearABLoop()
 
     setIntentExtras(intent.extras)
+    logActiveRenderer()
 
     lifecycleScope.launch(Dispatchers.IO) {
       // Load playback state (will skip track restoration if preferred language configured)
@@ -1863,6 +1910,17 @@ class PlayerActivity :
 
     // Asynchronously fetch better filename from HTTP headers for network streams
     fetchNetworkStreamTitle()
+  }
+
+  private fun logActiveRenderer() {
+    val requestedVulkan = runCatching { decoderPreferences.useVulkan.get() }.getOrDefault(false)
+    val actualVo = runCatching { MPVLib.getPropertyString("vo") }.getOrNull()
+    val actualGpuApi = runCatching { MPVLib.getPropertyString("gpu-api") }.getOrNull()
+    val actualGpuContext = runCatching { MPVLib.getPropertyString("gpu-context") }.getOrNull()
+    Log.d(
+      TAG,
+      "Renderer status: requestedVulkan=$requestedVulkan, vo=$actualVo, gpuApi=$actualGpuApi, gpuContext=$actualGpuContext",
+    )
   }
 
   /**
@@ -2062,15 +2120,34 @@ class PlayerActivity :
   private fun saveVideoPlaybackState(mediaTitle: String) {
     if (mediaIdentifier.isBlank()) return
 
+    val currentPos = MPVLib.getPropertyInt("time-pos") ?: 0
+    val currentDuration = MPVLib.getPropertyInt("duration") ?: 0
+
+    // If the media is no longer loaded (both position and duration are 0),
+    // do not overwrite any previously saved valid progress.
+    if (currentDuration <= 0 && currentPos <= 0) {
+      Log.d(TAG, "Skipping saveVideoPlaybackState because duration and position are 0 (media likely unloaded)")
+      return
+    }
+
     // Capture current track selection manually in session memory
     trackSelector.saveCurrentTrackSelection()
+    val currentNetworkConnectionId = intent.getLongExtra("network_connection_id", -1L)
+    val currentNetworkPath = currentCanonicalNetworkPath()
+    val currentNetworkDirectory = currentNetworkPath?.let(NetworkMediaIdUtils::parentPath)
+    val networkTrackProfile = if (currentNetworkConnectionId != -1L && currentNetworkDirectory != null) {
+      trackSelector.buildProfile(
+        connectionId = currentNetworkConnectionId,
+        directoryPath = currentNetworkDirectory,
+      )
+    } else {
+      null
+    }
 
     // Capture all necessary state variables SYNCHRONOUSLY before launching the coroutine.
     // This prevents a race condition where mediaIdentifier or other values are updated
     // for the NEXT video before the coroutine for the CURRENT video runs.
     val currentIdentifier = mediaIdentifier
-    val currentPos = MPVLib.getPropertyInt("time-pos") ?: 0
-    val currentDuration = MPVLib.getPropertyInt("duration") ?: 0
     val currentSpeed = MPVLib.getPropertyDouble("speed") ?: DEFAULT_PLAYBACK_SPEED
     val currentZoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f
     val currentSid = player.sid
@@ -2126,6 +2203,10 @@ class PlayerActivity :
             },
           ),
         )
+
+        networkTrackProfile?.let { profile ->
+          networkTrackProfileRepository.upsert(profile)
+        }
       }.onFailure { e ->
         Log.e(TAG, "Error saving playback state for $currentIdentifier", e)
       }
@@ -2161,9 +2242,22 @@ class PlayerActivity :
     if (mediaIdentifier.isBlank()) return false
 
     return runCatching {
-      val state = playbackStateRepository.getVideoDataByTitle(mediaIdentifier)
+      var state = playbackStateRepository.getVideoDataByTitle(mediaIdentifier)
+      if (state == null) {
+        val legacyKey = legacyPlaybackIdentifier()
+        if (legacyKey != null) {
+          val legacyState = playbackStateRepository.getVideoDataByTitle(legacyKey)
+          if (legacyState != null) {
+            state = legacyState.copy(mediaTitle = mediaIdentifier)
+            playbackStateRepository.upsert(state!!)
+            playbackStateRepository.deleteByTitle(legacyKey)
+            Log.d(TAG, "Migrated legacy playback state key: $legacyKey -> $mediaIdentifier")
+          }
+        }
+      }
 
       applyPlaybackState(state)
+      hydrateDirectoryTrackProfile(state)
       applyDefaultSettings(state)
 
       state != null
@@ -2241,6 +2335,30 @@ class PlayerActivity :
     }
   }
 
+  private fun legacyPlaybackIdentifier(): String? {
+    val networkFilePath = intent.getStringExtra("network_file_path") ?: return null
+    val networkConnectionId = intent.getLongExtra("network_connection_id", -1L)
+    if (networkConnectionId == -1L) return null
+    return "network_${networkConnectionId}_${networkFilePath.hashCode()}"
+  }
+
+  private suspend fun hydrateDirectoryTrackProfile(fileState: PlaybackStateEntity?) {
+    if (fileState != null) return
+    val networkConnectionId = intent.getLongExtra("network_connection_id", -1L)
+    val canonicalPath = NetworkMediaIdUtils.canonicalizeNetworkPath(intent.getStringExtra("network_file_path"))
+    if (networkConnectionId == -1L || canonicalPath == null) return
+
+    val profile = networkTrackProfileRepository.get(
+      connectionId = networkConnectionId,
+      directoryPath = NetworkMediaIdUtils.parentPath(canonicalPath),
+    ) ?: run {
+      trackSelector.resetManualSelectionMemory()
+      return
+    }
+
+    trackSelector.hydrateFromProfile(profile)
+  }
+
   /**
    * Saves the currently playing file to recently played history.
    *
@@ -2264,8 +2382,7 @@ class PlayerActivity :
       val networkConnectionId = intent.getLongExtra("network_connection_id", -1L)
 
       val filePath = if (networkConnectionId != -1L && networkFilePath != null) {
-        val cleanPath = if (networkFilePath.startsWith("/")) networkFilePath else "/$networkFilePath"
-        "mpvnas://$networkConnectionId$cleanPath"
+        NetworkMediaIdUtils.canonicalizeNetworkPath(networkFilePath) ?: networkFilePath
       } else {
         when (uri.scheme) {
           "file" -> {
@@ -2303,10 +2420,13 @@ class PlayerActivity :
           else -> "normal"
         }
 
-      // Get parsed video title from MPV
-      val videoTitle = runCatching {
-        MPVLib.getPropertyString("media-title")
-      }.getOrNull()?.takeIf { it.isNotBlank() && it != fileName }
+      // Get parsed video title from MPV, but ignore proxy stream ids for network playback.
+      val videoTitle = sanitizedRecentlyPlayedTitle(
+        candidate = runCatching { MPVLib.getPropertyString("media-title") }.getOrNull(),
+        fallbackName = fileName,
+        currentUri = uri,
+        networkConnectionId = networkConnectionId,
+      )
 
       // Get duration and file size from MPV
       val duration = runCatching {
@@ -2338,6 +2458,7 @@ class PlayerActivity :
         width = width,
         height = height,
         launchSource = launchSource,
+        networkConnectionId = networkConnectionId.takeIf { it != -1L },
       )
 
       Log.d(TAG, "Saved recently played: $filePath")
@@ -2428,6 +2549,9 @@ class PlayerActivity :
     if (isMpvnas) {
       intent.data = dataUri
       lifecycleScope.launch(Dispatchers.Main) {
+        val traceId = "newIntent_${System.currentTimeMillis()}_${dataUri?.hashCode()}"
+        val launchStartedAt = SystemClock.elapsedRealtime()
+        Log.d(TAG, "SMB trace[$traceId] onNewIntent mpvnas start uri=$dataUri")
         val resolvedUri = withContext(Dispatchers.IO) {
           dataUri?.let { resolveMpvnasUri(it) }
         }
@@ -2451,7 +2575,12 @@ class PlayerActivity :
           setHttpHeadersFromExtras(intent.extras)
 
           getPlayableUri(intent)?.let { uri ->
+            Log.d(
+              TAG,
+              "SMB trace[$traceId] onNewIntent resolved playableUri=$uri totalBeforeLoad=${SystemClock.elapsedRealtime() - launchStartedAt}ms",
+            )
             lifecycleScope.launch(Dispatchers.Default) {
+              Log.d(TAG, "MPV dispatch[loadfile:onNewIntent:mpvnas] uri=$uri")
               MPVLib.command("loadfile", uri)
             }
           }
@@ -2482,6 +2611,7 @@ class PlayerActivity :
       getPlayableUri(intent)?.let { uri ->
         // Avoid blocking UI thread while mpv opens network streams (e.g., HLS).
         lifecycleScope.launch(Dispatchers.Default) {
+          Log.d(TAG, "MPV dispatch[loadfile:onNewIntent:regular] uri=$uri")
           MPVLib.command("loadfile", uri)
         }
       }
@@ -3148,6 +3278,12 @@ class PlayerActivity :
 
     // Extract and set the new file name
     fileName = getFileNameFromUri(uri)
+    playlistNetworkFilePaths[uri]?.let { networkPath ->
+      intent.putExtra("network_file_path", networkPath)
+      intent.putExtra("network_connection_id", intent.getLongExtra("network_connection_id", -1L))
+      intent.putExtra("title", fileName)
+      intent.putExtra("filename", fileName)
+    }
     // Generate new media identifier for playback state
     mediaIdentifier = getMediaIdentifierFromUri(uri, fileName)
 
@@ -3189,6 +3325,7 @@ class PlayerActivity :
     // Load the new video
     // Avoid blocking UI thread while mpv opens network streams (e.g., HLS).
     lifecycleScope.launch(Dispatchers.Default) {
+      Log.d(TAG, "MPV dispatch[loadfile:playlistItem] uri=$playableUri")
       MPVLib.command("loadfile", playableUri)
     }
 
@@ -3278,8 +3415,7 @@ class PlayerActivity :
       val networkFilePath = playlistNetworkFilePaths[uri] ?: intent.getStringExtra("network_file_path")
 
       val filePath = if (networkConnectionId != -1L && networkFilePath != null) {
-        val cleanPath = if (networkFilePath.startsWith("/")) networkFilePath else "/$networkFilePath"
-        "mpvnas://$networkConnectionId$cleanPath"
+        NetworkMediaIdUtils.canonicalizeNetworkPath(networkFilePath) ?: networkFilePath
       } else {
         playlistNetworkFilePaths[uri] ?:
         when (uri.scheme) {
@@ -3311,10 +3447,13 @@ class PlayerActivity :
         }
       }
 
-      // Get parsed video title from MPV
-      val videoTitle = runCatching {
-        MPVLib.getPropertyString("media-title")
-      }.getOrNull()?.takeIf { it.isNotBlank() && it != name }
+      // Get parsed video title from MPV, but ignore proxy stream ids for network playback.
+      val videoTitle = sanitizedRecentlyPlayedTitle(
+        candidate = runCatching { MPVLib.getPropertyString("media-title") }.getOrNull(),
+        fallbackName = name,
+        currentUri = uri,
+        networkConnectionId = networkConnectionId,
+      )
 
       // Get duration and file size from MPV
       val duration = runCatching {
@@ -3346,6 +3485,7 @@ class PlayerActivity :
         width = width,
         height = height,
         launchSource = "playlist",
+        networkConnectionId = networkConnectionId.takeIf { it != -1L },
         playlistId = playlistId,
       )
 
@@ -3358,6 +3498,26 @@ class PlayerActivity :
       Log.d(TAG, "  - playlistId: $playlistId")
     }.onFailure { e ->
       Log.e(TAG, "Error saving recently played for playlist item", e)
+    }
+  }
+
+  private fun sanitizedRecentlyPlayedTitle(
+    candidate: String?,
+    fallbackName: String,
+    currentUri: Uri,
+    networkConnectionId: Long,
+  ): String? {
+    val title = candidate?.trim().orEmpty()
+    if (title.isBlank() || title == fallbackName) return null
+
+    val looksLikeProxyStreamId = Regex("""^\d+_\d{10,}$""").matches(title) ||
+      Regex("""^_?\d{10,}$""").matches(title)
+    val isProxyUri = currentUri.host?.lowercase() in setOf("127.0.0.1", "localhost", "0.0.0.0")
+
+    return if ((networkConnectionId != -1L || isProxyUri) && looksLikeProxyStreamId) {
+      null
+    } else {
+      title
     }
   }
 
@@ -3375,13 +3535,19 @@ class PlayerActivity :
     val networkConnectionId = intent.getLongExtra("network_connection_id", -1L)
 
     if (networkFilePath != null && networkConnectionId != -1L) {
-      // For network files via proxy: use connection ID + file path for stable identifier
-      val identifier = "network_${networkConnectionId}_${networkFilePath.hashCode()}"
+      val canonicalPath = NetworkMediaIdUtils.canonicalizeNetworkPath(networkFilePath)
+      if (canonicalPath != null) {
+        Log.d(
+          TAG,
+          "Using canonical network identifier: $canonicalPath (connection: $networkConnectionId, path: $networkFilePath)",
+        )
+        return NetworkMediaIdUtils.buildPlaybackKey(canonicalPath)
+      }
       Log.d(
         TAG,
-        "Using network file identifier: $identifier (connection: $networkConnectionId, path: $networkFilePath)",
+        "Falling back to raw network identifier: $networkFilePath (connection: $networkConnectionId)",
       )
-      return identifier
+      return networkFilePath
     }
 
     val uri = extractUriFromIntent(intent)
@@ -3404,14 +3570,39 @@ class PlayerActivity :
     val networkConnectionId = intent.getLongExtra("network_connection_id", -1L)
     val networkFilePath = playlistNetworkFilePaths[uri]
     if (networkFilePath != null && networkConnectionId != -1L) {
-      val identifier = "network_${networkConnectionId}_${networkFilePath.hashCode()}"
-      Log.d(TAG, "Using network playlist item identifier: $identifier")
-      return identifier
+      val canonicalPath = NetworkMediaIdUtils.canonicalizeNetworkPath(networkFilePath)
+      if (canonicalPath != null) {
+        Log.d(TAG, "Using canonical network playlist item identifier: $canonicalPath")
+        return NetworkMediaIdUtils.buildPlaybackKey(canonicalPath)
+      }
+      return networkFilePath
     }
     return if (uri.scheme?.startsWith("http") == true || uri.scheme == "rtmp" || uri.scheme == "ftp" || uri.scheme == "rtsp" || uri.scheme == "mms") {
       "${fileName}_${uri.toString().hashCode()}"
     } else {
       fileName
+    }
+  }
+
+  private fun currentCanonicalNetworkPath(): String? {
+    val currentUri = playlist.getOrNull(playlistIndex)
+    val playlistPath = currentUri?.let { playlistNetworkFilePaths[it] }
+    return NetworkMediaIdUtils.canonicalizeNetworkPath(
+      playlistPath ?: intent.getStringExtra("network_file_path"),
+    )
+  }
+
+  private inline fun <T> traceStep(
+    traceId: String,
+    step: String,
+    block: () -> T,
+  ): T {
+    val start = SystemClock.elapsedRealtime()
+    return try {
+      block()
+    } finally {
+      val elapsed = SystemClock.elapsedRealtime() - start
+      Log.d(TAG, "SMB trace[$traceId] $step took ${elapsed}ms")
     }
   }
 
@@ -3471,28 +3662,40 @@ class PlayerActivity :
   }
 
   private suspend fun resolveMpvnasUri(uri: Uri): Uri? {
-    if (uri.scheme != "mpvnas") return null
-    val connectionIdStr = uri.host ?: return null
-    val connectionId = connectionIdStr.toLongOrNull() ?: return null
-    val networkFilePath = uri.path ?: ""
-    if (networkFilePath.isEmpty()) return null
+    val ref = NetworkMediaIdUtils.parseMpvnasUri(uri) ?: return null
+    val connectionId = ref.connectionId
+    val networkFilePath = ref.canonicalPath
+    val traceId = "${connectionId}_${networkFilePath.hashCode()}"
+    val startedAt = SystemClock.elapsedRealtime()
 
     try {
-      val connection = networkRepository.getConnectionById(connectionId) ?: return null
-      
-      val parentPath = if (networkFilePath.contains("/")) {
-        networkFilePath.substringBeforeLast("/")
-      } else {
-        ""
+      Log.d(TAG, "SMB trace[$traceId] resolveMpvnasUri start path=$networkFilePath")
+      val connection = traceStep(traceId, "getConnectionById") {
+        networkRepository.getConnectionById(connectionId)
+      } ?: run {
+        Log.w(TAG, "SMB trace[$traceId] connection not found for id=$connectionId")
+        return null
+      }
+      val file = runCatching {
+        val parentPath = NetworkMediaIdUtils.parentPath(networkFilePath)
+        val filesResult = traceStep(traceId, "listFiles parent=$parentPath") {
+          networkRepository.listFiles(connection, parentPath)
+        }
+        val files = filesResult.getOrNull()
+        Log.d(TAG, "SMB trace[$traceId] parent listing returned ${files?.size ?: -1} entries")
+        traceStep(traceId, "matchTargetFile") {
+          files?.find { candidate ->
+            NetworkMediaIdUtils.canonicalizeNetworkPath(candidate.path) == networkFilePath
+          }
+        }
+      }.getOrElse { error ->
+        Log.w(TAG, "resolveMpvnasUri: failed to enumerate parent directory for $networkFilePath", error)
+        null
       }
 
-      val filesResult = networkRepository.listFiles(connection, parentPath)
-      val files = filesResult.getOrNull()
-      val file = files?.find { it.path == networkFilePath }
-
-      val fileName = file?.name ?: networkFilePath.substringAfterLast("/")
+      val fileName = ref.displayName ?: file?.name ?: NetworkMediaIdUtils.fileNameFromPath(networkFilePath)
       val fileSize = file?.size ?: -1L
-      val mimeType = file?.mimeType ?: "video/mp4"
+      val mimeType = file?.mimeType ?: guessMimeTypeFromPath(networkFilePath)
 
       val useProxy = connection.protocol in setOf(
         app.marlboroadvance.mpvex.domain.network.NetworkProtocol.SMB,
@@ -3501,39 +3704,72 @@ class PlayerActivity :
       )
 
       val resolvedUri = if (useProxy) {
-        val proxy = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
-        val streamId = "${connectionId}_${System.currentTimeMillis()}_${networkFilePath.hashCode()}"
-        val proxyUrl = proxy.registerStream(
-          streamId = streamId,
-          connection = connection,
-          filePath = networkFilePath,
-          fileSize = fileSize,
-          mimeType = mimeType,
-          title = fileName
-        )
-        registeredStreamIds.add(streamId)
-        Uri.parse(proxyUrl)
+        traceStep(traceId, "registerStream") {
+          val proxy = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.getInstance()
+          val streamId = "${connectionId}_${System.currentTimeMillis()}_${networkFilePath.hashCode()}"
+          val proxyUrl = proxy.registerStream(
+            streamId = streamId,
+            connection = connection,
+            filePath = networkFilePath,
+            fileSize = fileSize,
+            mimeType = mimeType,
+            title = fileName
+          )
+          registeredStreamIds.add(streamId)
+          Uri.parse(proxyUrl)
+        }
       } else {
-        app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkStreamingProvider.setConnection(connectionId, connection)
-        app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkStreamingProvider.getUri(this, connectionId, networkFilePath)
+        traceStep(traceId, "providerUri") {
+          app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkStreamingProvider.setConnection(connectionId, connection)
+          app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkStreamingProvider.getUri(this, connectionId, networkFilePath)
+        }
       }
 
       intent.putExtra("network_file_path", networkFilePath)
       intent.putExtra("network_connection_id", connectionId)
       intent.putExtra("title", fileName)
       intent.putExtra("filename", fileName)
+      Log.d(
+        TAG,
+        "SMB trace[$traceId] resolveMpvnasUri done total=${SystemClock.elapsedRealtime() - startedAt}ms fileMatched=${file != null} useProxy=$useProxy uri=$resolvedUri",
+      )
 
       return resolvedUri
     } catch (e: Exception) {
-      Log.e(TAG, "Failed to resolve mpvnas URI: $uri", e)
+      Log.e(
+        TAG,
+        "SMB trace[$traceId] resolveMpvnasUri failed after ${SystemClock.elapsedRealtime() - startedAt}ms: $uri",
+        e,
+      )
       return null
+    }
+  }
+
+  private fun guessMimeTypeFromPath(path: String): String {
+    return when (path.substringAfterLast('.', "").lowercase()) {
+      "mp4" -> "video/mp4"
+      "mkv" -> "video/x-matroska"
+      "webm" -> "video/webm"
+      "avi" -> "video/x-msvideo"
+      "mov" -> "video/quicktime"
+      "flv" -> "video/x-flv"
+      "wmv" -> "video/x-ms-wmv"
+      "m4v" -> "video/x-m4v"
+      "3gp" -> "video/3gpp"
+      "ts" -> "video/mp2t"
+      else -> "video/*"
     }
   }
 
   private fun generatePlaylistFromNetworkFolder(connectionId: Long, networkFilePath: String) {
     lifecycleScope.launch(Dispatchers.IO) {
+      val traceId = "playlist_${connectionId}_${networkFilePath.hashCode()}"
+      val startedAt = SystemClock.elapsedRealtime()
       runCatching {
-        val connection = networkRepository.getConnectionById(connectionId) ?: return@runCatching
+        Log.d(TAG, "SMB trace[$traceId] generatePlaylistFromNetworkFolder start path=$networkFilePath")
+        val connection = traceStep(traceId, "getConnectionById") {
+          networkRepository.getConnectionById(connectionId)
+        } ?: return@runCatching
 
         val parentPath = if (networkFilePath.contains("/")) {
           networkFilePath.substringBeforeLast("/")
@@ -3541,14 +3777,18 @@ class PlayerActivity :
           ""
         }
 
-        val listResult = networkRepository.listFiles(connection, parentPath)
+        val listResult = traceStep(traceId, "listFiles parent=$parentPath") {
+          networkRepository.listFiles(connection, parentPath)
+        }
         val files = listResult.getOrNull() ?: return@runCatching
+        Log.d(TAG, "SMB trace[$traceId] parent listing returned ${files.size} entries")
 
         val videoFiles = files.filter { file ->
           !file.isDirectory && app.marlboroadvance.mpvex.utils.storage.FileTypeUtils.VIDEO_EXTENSIONS.contains(
             file.name.substringAfterLast(".", "").lowercase()
           )
         }
+        Log.d(TAG, "SMB trace[$traceId] filtered ${videoFiles.size} video entries")
 
         if (videoFiles.size <= 1) return@runCatching
 
@@ -3568,7 +3808,8 @@ class PlayerActivity :
         val newPlaylist = mutableListOf<Uri>()
         var newIndex = 0
 
-        siblingFiles.forEachIndexed { idx, file ->
+        traceStep(traceId, "buildPlaylistUris count=${siblingFiles.size}") {
+          siblingFiles.forEachIndexed { idx, file ->
           val itemUri = if (file.path == networkFilePath && initialPlayableUri != null) {
             newIndex = idx
             initialPlayableUri
@@ -3593,20 +3834,28 @@ class PlayerActivity :
           }
           newPlaylist.add(itemUri)
           playlistTitles[itemUri] = file.name
-          playlistNetworkFilePaths[itemUri] = file.path
+          playlistNetworkFilePaths[itemUri] = NetworkMediaIdUtils.canonicalizeNetworkPath(file.path) ?: file.path
+        }
         }
 
         withContext(Dispatchers.Main) {
           playlist = newPlaylist
           playlistIndex = newIndex
-          Log.d(TAG, "Network playlist generated: ${playlist.size} videos")
+          Log.d(
+            TAG,
+            "SMB trace[$traceId] Network playlist generated: ${playlist.size} videos total=${SystemClock.elapsedRealtime() - startedAt}ms",
+          )
           // Re-initialize shuffle if enabled
           if (viewModel.shuffleEnabled.value) {
             onShuffleToggled(true)
           }
         }
       }.onFailure { e ->
-        Log.e(TAG, "Failed to generate network playlist", e)
+        Log.e(
+          TAG,
+          "SMB trace[$traceId] Failed to generate network playlist after ${SystemClock.elapsedRealtime() - startedAt}ms",
+          e,
+        )
       }
     }
   }

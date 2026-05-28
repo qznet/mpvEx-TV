@@ -43,18 +43,19 @@ fun AddConnectionSheet(
   onDismiss: () -> Unit,
   onSave: (NetworkConnection) -> Unit,
   modifier: Modifier = Modifier,
+  initialConnection: NetworkConnection? = null,
 ) {
   if (!isOpen) return
 
-  var name by remember { mutableStateOf("") }
-  var protocol by remember { mutableStateOf(NetworkProtocol.SMB) }
-  var host by remember { mutableStateOf("") }
-  var port by remember { mutableStateOf(protocol.defaultPort.toString()) }
-  var username by remember { mutableStateOf("") }
-  var password by remember { mutableStateOf("") }
-  var path by remember { mutableStateOf("/") }
-  var isAnonymous by remember { mutableStateOf(false) }
-  var useHttps by remember { mutableStateOf(false) }
+  var name by remember(initialConnection) { mutableStateOf(initialConnection?.name ?: "") }
+  var protocol by remember(initialConnection) { mutableStateOf(initialConnection?.protocol ?: NetworkProtocol.SMB) }
+  var host by remember(initialConnection) { mutableStateOf(initialConnection?.host ?: "") }
+  var port by remember(initialConnection) { mutableStateOf(initialConnection?.port?.toString() ?: protocol.defaultPort.toString()) }
+  var username by remember(initialConnection) { mutableStateOf(initialConnection?.username ?: "") }
+  var password by remember(initialConnection) { mutableStateOf(initialConnection?.password ?: "") }
+  var path by remember(initialConnection) { mutableStateOf(initialConnection?.path ?: "/") }
+  var isAnonymous by remember(initialConnection) { mutableStateOf(initialConnection?.isAnonymous ?: false) }
+  var useHttps by remember(initialConnection) { mutableStateOf(initialConnection?.useHttps ?: false) }
   var passwordVisible by remember { mutableStateOf(false) }
   var protocolMenuExpanded by remember { mutableStateOf(false) }
 
@@ -80,10 +81,10 @@ fun AddConnectionSheet(
 
   AlertDialog(
     onDismissRequest = handleDismiss,
-    modifier = Modifier.widthIn(min = 400.dp, max = 600.dp),
+    modifier = Modifier.widthIn(min = 320.dp, max = 400.dp),
     title = {
       Text(
-        text = "Add Network Connection",
+        text = if (initialConnection != null) "Copy Connection" else "Add Network Connection",
         style = MaterialTheme.typography.headlineSmall,
         fontWeight = FontWeight.Medium,
       )

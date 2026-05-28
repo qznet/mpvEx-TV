@@ -12,6 +12,7 @@ import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
 import app.marlboroadvance.mpvex.repository.NetworkRepository
+import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -138,7 +139,7 @@ class NetworkBrowserViewModel(
         intent.putExtra("title", file.name)
         intent.putExtra("filename", file.name)
         // Pass the original network file path for stable media identifier (position saving)
-        intent.putExtra("network_file_path", file.path)
+        intent.putExtra("network_file_path", NetworkMediaIdUtils.canonicalizeNetworkPath(file.path) ?: file.path)
         intent.putExtra("network_connection_id", connectionId)
         intent.setDataAndType(uri, file.mimeType ?: "video/*")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

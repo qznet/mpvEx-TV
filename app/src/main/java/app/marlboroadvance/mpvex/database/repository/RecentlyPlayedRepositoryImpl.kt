@@ -17,6 +17,7 @@ class RecentlyPlayedRepositoryImpl(
     width: Int,
     height: Int,
     launchSource: String?,
+    networkConnectionId: Long?,
     playlistId: Int?,
   ) {
     // Check if there's an existing entry for this file
@@ -36,6 +37,7 @@ class RecentlyPlayedRepositoryImpl(
         timestamp = System.currentTimeMillis(),
         // Preserve the original launch source when reopening the same file
         launchSource = existingEntry.launchSource,
+        networkConnectionId = networkConnectionId ?: existingEntry.networkConnectionId,
         playlistId = playlistId ?: existingEntry.playlistId,
       )
       recentlyPlayedDao.insert(entity)
@@ -51,6 +53,7 @@ class RecentlyPlayedRepositoryImpl(
         height = height,
         timestamp = System.currentTimeMillis(),
         launchSource = launchSource,
+        networkConnectionId = networkConnectionId,
         playlistId = playlistId,
       )
       recentlyPlayedDao.insert(entity)

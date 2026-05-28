@@ -6,6 +6,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import app.marlboroadvance.mpvex.database.MpvExDatabase
 import app.marlboroadvance.mpvex.database.repository.PlaybackStateRepositoryImpl
+import app.marlboroadvance.mpvex.database.repository.NetworkTrackProfileRepository
 import app.marlboroadvance.mpvex.database.repository.PlaylistRepository
 import app.marlboroadvance.mpvex.database.repository.RecentlyPlayedRepositoryImpl
 import app.marlboroadvance.mpvex.domain.playbackstate.repository.PlaybackStateRepository
@@ -459,6 +460,42 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
   }
 }
 
+val MIGRATION_9_10 = object : Migration(9, 10) {
+  override fun migrate(db: SupportSQLiteDatabase) {
+    try {
+      android.util.Log.d("Migration_9_10", "Starting migration from version 9 to 10")
+
+      db.execSQL(
+        "ALTER TABLE `RecentlyPlayedEntity` ADD COLUMN `networkConnectionId` INTEGER DEFAULT NULL",
+      )
+
+      db.execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS `NetworkTrackProfileEntity` (
+          `connectionId` INTEGER NOT NULL,
+          `directoryPath` TEXT NOT NULL,
+          `audioTrackNumber` INTEGER,
+          `audioLang` TEXT,
+          `audioTitle` TEXT,
+          `subtitleMode` TEXT NOT NULL,
+          `subtitleTrackNumber` INTEGER,
+          `subtitleLang` TEXT,
+          `subtitleTitle` TEXT,
+          `subtitleIsExternal` INTEGER,
+          `updatedAt` INTEGER NOT NULL,
+          PRIMARY KEY(`connectionId`, `directoryPath`)
+        )
+        """.trimIndent(),
+      )
+
+      android.util.Log.d("Migration_9_10", "Migration completed successfully")
+    } catch (e: Exception) {
+      android.util.Log.e("Migration_9_10", "Migration failed", e)
+      throw e
+    }
+  }
+}
+
 
 val DatabaseModule =
   module {
@@ -474,7 +511,7 @@ val DatabaseModule =
       Room
         .databaseBuilder(context, MpvExDatabase::class.java, "mpvex.db")
         .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
         .fallbackToDestructiveMigration(true) // Fallback if migration fails (last resort)
         .build()
     }
@@ -498,6 +535,10 @@ val DatabaseModule =
 
     single {
       get<MpvExDatabase>().networkConnectionDao()
+    }
+
+    single {
+      NetworkTrackProfileRepository(get<MpvExDatabase>().networkTrackProfileDao())
     }
 
     single {
