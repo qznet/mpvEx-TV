@@ -70,6 +70,16 @@ android {
     }
   }
 
+  signingConfigs {
+    getByName("debug") {
+      val home = System.getProperty("user.home")
+      storeFile = file("$home/.android/debug.keystore")
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
+    }
+  }
+
   buildTypes {
     named("release") {
       isMinifyEnabled = true
@@ -81,11 +91,13 @@ android {
       ndk {
         debugSymbolLevel = "none"
       }
+      // Local signature for testing release variant
+      signingConfig = signingConfigs.getByName("debug")
     }
 
     create("preview") {
       initWith(getByName("release"))
-      signingConfig = null
+      signingConfig = signingConfigs.getByName("debug")
       applicationIdSuffix = ".preview"
       versionNameSuffix = "-${getCommitCount()}"
     }
@@ -93,6 +105,8 @@ android {
     named("debug") {
       applicationIdSuffix = ".debug"
       versionNameSuffix = "-${getCommitCount()}"
+      // Ensure we use the standard debug key consistently
+      signingConfig = signingConfigs.getByName("debug")
     }
   }
 
@@ -128,21 +142,23 @@ android {
 }
 
 androidComponents {
-  val abiCodes = mapOf(
-    "armeabi-v7a" to 1,
-    "arm64-v8a" to 2,
-    "x86" to 3,
-    "x86_64" to 4
-  )
-
   onVariants { variant ->
     variant.outputs.forEach { output ->
       val abi = output.filters
         .find { it.filterType == FilterConfiguration.FilterType.ABI }
         ?.identifier
 
+      val abiSuffix = when (abi) {
+        "armeabi-v7a" -> 1
+        "arm64-v8a" -> 2
+        "x86" -> 3
+        "x86_64" -> 4
+        null -> 9 // Universal APK gets highest suffix to allow updating any split
+        else -> 0
+      }
+
       output.versionCode.set(
-        (output.versionCode.orNull ?: 0) * 10 + (abiCodes[abi] ?: 0)
+        (output.versionCode.orNull ?: 0) * 10 + abiSuffix
       )
     }
   }
