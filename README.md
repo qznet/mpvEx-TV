@@ -98,59 +98,33 @@ The app generates multiple APK variants for different CPU architectures:
 
 ## Releases
 
-### Setting Up Release Signing
-
-To enable automatic signing for release builds in GitHub Actions, you need to configure the
-following secrets in your GitHub repository:
-
-1. Navigate to your repository on GitHub
-2. Go to **Settings** → **Secrets and variables** → **Actions**
-3. Add the following repository secrets:
-
-| Secret Name              | Description                                          |
-|--------------------------|------------------------------------------------------|
-| `SIGNING_KEYSTORE`       | Base64-encoded keystore file (`.jks` or `.keystore`) |
-| `SIGNING_KEY_ALIAS`      | The alias name used when creating the keystore       |
-| `SIGNING_STORE_PASSWORD` | Password for the keystore file                       |
-| `KEY_PASSWORD`           | Password for the key (can be same as store password) |
-
-#### Encoding Your Keystore
-
-To encode your keystore file to base64:
-
-**Linux/macOS:**
-
-```bash
-base64 -i your-keystore.jks | tr -d '\n' > keystore.txt
-```
-
-**Windows (PowerShell):**
-
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("your-keystore.jks")) | Out-File -FilePath keystore.txt -NoNewline
-```
-
-Copy the contents of `keystore.txt` and paste it as the value for the `SIGNING_KEYSTORE` secret.
-
 ### Creating a Release
 
 1. Update `versionCode` and `versionName` in `app/build.gradle.kts`
-2. Commit the changes
-3. Create and push a tag:
+2. Build the release APK:
    ```bash
-   git tag -a v1.0.0 -m "Release version 1.0.0"
-   git push origin v1.0.0
+   ./gradlew assembleDefaultRelease -x lintVitalAnalyzeDefaultRelease -x lintVitalReportDefaultRelease -x lintVitalDefaultRelease
    ```
-4. GitHub Actions will automatically build, sign, and create a draft release
-
-### Creating a Preview Release
-
-1. Create and push a preview tag:
+3. Commit and push the version change:
    ```bash
-   git tag -a v1.0.0-preview.1 -m "Preview release"
-   git push origin v1.0.0-preview.1
+   git add app/build.gradle.kts && git commit -m "release: bump version to x.x.x" && git push
    ```
-2. GitHub Actions will create a pre-release automatically
+4. Create a tag and push:
+   ```bash
+   git tag vx.x.x && git push origin vx.x.x
+   ```
+5. Create a GitHub Release and upload APKs:
+   ```bash
+   gh release create vx.x.x \
+     app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk \
+     app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk \
+     app/build/outputs/apk/default/release/app-default-universal-release.apk \
+     app/build/outputs/apk/default/release/app-default-x86_64-release.apk \
+     app/build/outputs/apk/default/release/app-default-x86-release.apk \
+     --repo XIONGPEILIN/mpvExtended-android \
+     --title "mpv NAS Player vx.x.x" \
+     --notes "mpv NAS Player vx.x.x"
+   ```
 
 ---
 

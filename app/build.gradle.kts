@@ -72,8 +72,7 @@ android {
 
   signingConfigs {
     getByName("debug") {
-      val home = System.getProperty("user.home")
-      storeFile = file("$home/.android/debug.keystore")
+      storeFile = rootProject.file("debug.keystore")
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
@@ -91,7 +90,7 @@ android {
       ndk {
         debugSymbolLevel = "none"
       }
-      // Local signature for testing release variant
+      // Debug signature for local release builds
       signingConfig = signingConfigs.getByName("debug")
     }
 

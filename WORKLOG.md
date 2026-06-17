@@ -1,5 +1,4 @@
-# 工作记录
+# 宸ヤ綔璁板綍
 
-- 2026-06-04：修复网络页连接卡在手机窄屏下过窄的问题；将网络连接列表改为自适应网格，并让顶部“Stream Link / Local Network / Empty State”占满整行，避免连接后卡片标题与操作按钮被挤压。
-- 修改文件：`app/src/main/java/app/marlboroadvance/mpvex/ui/browser/networkstreaming/NetworkStreamingScreen.kt`
-- 验证：`git diff --check` 通过；`./gradlew :app:assembleDefaultRelease` 成功，release APK 已输出到 `app/build/outputs/apk/default/release/`。
+- 2026-06-04锛氫慨澶嶇綉缁滈〉杩炴帴鍗″湪鎵嬫満绐勫睆涓嬭繃绐勭殑闂锛涘皢缃戠粶杩炴帴鍒楄〃鏀逛负鑷€傚簲缃戞牸锛屽苟璁╅《閮ㄢ€淪tream Link / Local Network / Empty State鈥濆崰婊℃暣琛岋紝閬垮厤杩炴帴鍚庡崱鐗囨爣棰樹笌鎿嶄綔鎸夐挳琚尋鍘嬨€?- 淇敼鏂囦欢锛歚app/src/main/java/app/marlboroadvance/mpvex/ui/browser/networkstreaming/NetworkStreamingScreen.kt`
+- 楠岃瘉锛歚git diff --check` 閫氳繃锛沗./gradlew :app:assembleDefaultRelease` 鎴愬姛锛宺elease APK 宸茶緭鍑哄埌 `app/build/outputs/apk/default/release/`銆?
