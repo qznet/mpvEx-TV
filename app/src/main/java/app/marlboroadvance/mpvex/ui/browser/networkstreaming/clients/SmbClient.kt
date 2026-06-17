@@ -64,6 +64,7 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
   private var baseUrl: String = ""
   private var resolvedHostIp: String = ""
   private var shareName: String = ""
+  private var rootPath: String = ""
 
   override suspend fun connect(): Result<Unit> =
     connectMutex.withLock {
@@ -78,8 +79,11 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
           }
           val hostForUrl = resolvedAddress.hostAddress ?: connection.host
           resolvedHostIp = hostForUrl
-          shareName = connection.path.trim('/')
+          val parts = connection.path.trim('/').split('/', limit = 2)
+          shareName = parts[0]
+          rootPath = parts.getOrElse(1) { "" }
           baseUrl = "smb://${hostForUrl}${if (connection.port != 445) ":${connection.port}" else ""}/${shareName}"
+          if (rootPath.isNotEmpty()) baseUrl += "/$rootPath"
           smbConnection = client.connect(hostForUrl, connection.port)
           val authContext = if (connection.isAnonymous) AuthenticationContext.anonymous() 
                             else AuthenticationContext(connection.username, connection.password.toCharArray(), null)
@@ -126,7 +130,8 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
       try {
         if (!isConnected()) connect().getOrThrow()
         val ds = diskShare ?: return@withContext Result.failure(Exception("Not connected"))
-        val relativePath = getRelativePath(path)
+        var relativePath = getRelativePath(path)
+        if (rootPath.isNotEmpty() && relativePath.isEmpty()) relativePath = rootPath
         val rawFiles = withTimeout(15000) { ds.list(relativePath) }
         val files = rawFiles.mapNotNull { fileInfo ->
           val fileName = fileInfo.fileName
