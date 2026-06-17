@@ -31,6 +31,9 @@ app/release
 # Kotlin
 kotlin-daemon-*.log
 
+# Claude
+.claude/
+
 # Built variants
 *.apk
 *.aar
