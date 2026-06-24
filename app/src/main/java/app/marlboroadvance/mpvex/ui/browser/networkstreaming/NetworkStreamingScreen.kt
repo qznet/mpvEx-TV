@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,32 +17,22 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SignalWifiConnectedNoInternet4
 import androidx.compose.material.icons.rounded.SignalWifiStatusbarConnectedNoInternet4
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,12 +49,10 @@ import app.marlboroadvance.mpvex.ui.browser.components.BrowserTopBar
 import app.marlboroadvance.mpvex.ui.browser.cards.NetworkConnectionCard
 import app.marlboroadvance.mpvex.ui.browser.dialogs.AddConnectionSheet
 import app.marlboroadvance.mpvex.ui.browser.dialogs.EditConnectionSheet
-import app.marlboroadvance.mpvex.ui.browser.states.EmptyState
 import app.marlboroadvance.mpvex.ui.preferences.PreferencesScreen
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
-import app.marlboroadvance.mpvex.utils.media.MediaUtils
-import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+
 @Serializable
 object NetworkStreamingScreen : Screen {
   @OptIn(ExperimentalMaterial3Api::class)
@@ -86,33 +73,6 @@ object NetworkStreamingScreen : Screen {
     // LazyGrid state for scroll tracking
     val gridState = rememberLazyGridState()
 
-    // Track scroll direction to show/hide FAB
-    var previousFirstVisibleItemIndex by remember { mutableIntStateOf(0) }
-    var previousFirstVisibleItemScrollOffset by remember { mutableIntStateOf(0) }
-    
-    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-    
-    val isFabVisible by remember {
-      derivedStateOf {
-        val currentIndex = gridState.firstVisibleItemIndex
-        val currentOffset = gridState.firstVisibleItemScrollOffset
-
-        // Show FAB when at the top
-        if (currentIndex == 0 && currentOffset == 0) {
-          true
-        } else {
-          // Show when scrolling up, hide when scrolling down
-          val isScrollingUp = currentIndex < previousFirstVisibleItemIndex ||
-            (currentIndex == previousFirstVisibleItemIndex && currentOffset < previousFirstVisibleItemScrollOffset)
-
-          previousFirstVisibleItemIndex = currentIndex
-          previousFirstVisibleItemScrollOffset = currentOffset
-
-          isScrollingUp
-        }
-      }
-    }
-
     Scaffold(
         topBar = {
           BrowserTopBar(
@@ -122,34 +82,23 @@ object NetworkStreamingScreen : Screen {
             totalCount = 0,
             onBackClick = null, // No back button for network screen (root tab)
             onCancelSelection = { },
-          onSortClick = null,
-          // Search functionality disabled for production
-          onSearchClick = null,
-          onSettingsClick = {
-            backstack.add(app.marlboroadvance.mpvex.ui.preferences.PreferencesScreen)
-          },
-          onDeleteClick = null,
-          onRenameClick = null,
-          isSingleSelection = false,
-          onInfoClick = null,
-          onShareClick = null,
-          onPlayClick = null,
-          onSelectAll = null,
-          onInvertSelection = null,
-          onDeselectAll = null,
-        )
-      },
-      floatingActionButton = {
-        val navigationBarHeight = app.marlboroadvance.mpvex.ui.browser.LocalNavigationBarHeight.current
-        if (isFabVisible) {
-          ExtendedFloatingActionButton(
-            onClick = { showAddSheet = true },
-            icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-            text = { Text(stringResource(R.string.add_connection)) },
-            modifier = Modifier.padding(bottom = navigationBarHeight)
+            onSortClick = null,
+            onSearchClick = null,
+            onSettingsClick = {
+              backstack.add(app.marlboroadvance.mpvex.ui.preferences.PreferencesScreen)
+            },
+            onAddConnectionClick = { showAddSheet = true },
+            onDeleteClick = null,
+            onRenameClick = null,
+            isSingleSelection = false,
+            onInfoClick = null,
+            onShareClick = null,
+            onPlayClick = null,
+            onSelectAll = null,
+            onInvertSelection = null,
+            onDeselectAll = null,
           )
-        }
-      },
+        },
     ) { padding ->
       LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 360.dp),
@@ -166,18 +115,8 @@ object NetworkStreamingScreen : Screen {
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
       ) {
-          // Section 1: Stream Link
+          // Local Network header
           item(span = { GridItemSpan(maxLineSpan) }) {
-            StreamLinkSection(
-              onPlayLink = { url ->
-                MediaUtils.playFile(url, context, "network_stream")
-              },
-            )
-          }
-
-          // Section 2: Local Network header
-          item(span = { GridItemSpan(maxLineSpan) }) {
-            Spacer(modifier = Modifier.height(24.dp))
             Text(
               text = stringResource(R.string.local_network),
               style = MaterialTheme.typography.titleLarge,
@@ -213,7 +152,7 @@ object NetworkStreamingScreen : Screen {
                     text = stringResource(R.string.no_network_connections),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface, // a
+                    color = MaterialTheme.colorScheme.onSurface,
                   )
                   Spacer(modifier = Modifier.height(8.dp))
                   Text(
@@ -245,7 +184,7 @@ object NetworkStreamingScreen : Screen {
                         NetworkBrowserScreen(
                           connectionId = conn.id,
                           connectionName = conn.name,
-                          currentPath = "/",  // Always start at root - conn.path is already included in connection
+                          currentPath = "/",
                         ),
                       )
                     }
@@ -289,115 +228,6 @@ object NetworkStreamingScreen : Screen {
             editingConnection = null
           },
         )
-      }
-    }
-  }
-}
-
-@Composable
-private fun StreamLinkSection(
-  onPlayLink: (String) -> Unit,
-) {
-  val context = LocalContext.current
-  var linkUrl by rememberSaveable { mutableStateOf("") }
-
-  Column(
-    modifier = Modifier.fillMaxWidth(),
-  ) {
-    Text(
-      text = stringResource(R.string.stream_link),
-      style = MaterialTheme.typography.titleLarge,
-      fontWeight = FontWeight.Bold,
-      color = MaterialTheme.colorScheme.primary,
-      modifier = Modifier.padding(vertical = 8.dp),
-    )
-    Card(
-      modifier = Modifier.fillMaxWidth(),
-      colors = CardDefaults.cardColors(
-        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-      ),
-    ) {
-      Column(
-        modifier = Modifier.padding(16.dp),
-      ) {
-        OutlinedTextField(
-          value = linkUrl,
-          onValueChange = { linkUrl = it },
-          label = { Text(stringResource(R.string.video_url)) },
-          placeholder = {
-            Text(
-              text = "https://example.com/video.mp4",
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          },
-          leadingIcon = {
-            Icon(
-              imageVector = Icons.Filled.Link,
-              contentDescription = null,
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          },
-          modifier = Modifier.fillMaxWidth(),
-          singleLine = true,
-        )
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp),
-          horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-        ) {
-          FilledTonalButton(
-            onClick = {
-              val clipboardManager =
-                context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-              val clipData = clipboardManager?.primaryClip
-              if (clipData != null && clipData.itemCount > 0) {
-                val text = clipData.getItemAt(0).text?.toString() ?: ""
-                if (text.isNotBlank()) {
-                  linkUrl = text
-                }
-              }
-            },
-            colors = ButtonDefaults.filledTonalButtonColors(
-              containerColor = MaterialTheme.colorScheme.secondaryContainer,
-              contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            ),
-          ) {
-            Icon(
-              imageVector = Icons.Filled.ContentPaste,
-              contentDescription = null,
-              modifier = Modifier.padding(end = 8.dp),
-            )
-            Text(
-              text = stringResource(R.string.paste),
-              fontWeight = FontWeight.Bold,
-            )
-          }
-
-          FilledTonalButton(
-            onClick = {
-              if (linkUrl.isNotBlank()) {
-                onPlayLink(linkUrl)
-                linkUrl = ""
-              }
-            },
-            enabled = linkUrl.isNotBlank(),
-            colors = ButtonDefaults.filledTonalButtonColors(
-              containerColor = MaterialTheme.colorScheme.primaryContainer,
-              contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            ),
-          ) {
-            Icon(
-              imageVector = Icons.Filled.PlayArrow,
-              contentDescription = null,
-              modifier = Modifier.padding(end = 8.dp),
-            )
-            Text(
-              text = stringResource(R.string.play_recently_played_or_first),
-              fontWeight = FontWeight.Bold,
-            )
-          }
-        }
       }
     }
   }
