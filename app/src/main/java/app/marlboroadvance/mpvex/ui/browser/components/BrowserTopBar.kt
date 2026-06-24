@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Block
@@ -80,6 +81,7 @@ fun BrowserTopBar(
   onSortClick: (() -> Unit)? = null,
   onSearchClick: (() -> Unit)? = null,
   onSettingsClick: (() -> Unit)? = null,
+  onAddConnectionClick: (() -> Unit)? = null,
   onDeleteClick: (() -> Unit)? = null,
   onRenameClick: (() -> Unit)? = null,
   isSingleSelection: Boolean = false,
@@ -121,6 +123,7 @@ fun BrowserTopBar(
       onSortClick = onSortClick,
       onSearchClick = onSearchClick,
       onSettingsClick = onSettingsClick,
+      onAddConnectionClick = onAddConnectionClick,
       additionalActions = additionalActions,
       modifier = modifier,
       onTitleLongPress = onTitleLongPress,
@@ -139,6 +142,7 @@ private fun NormalTopBar(
   onSortClick: (() -> Unit)?,
   onSearchClick: (() -> Unit)?,
   onSettingsClick: (() -> Unit)?,
+  onAddConnectionClick: (() -> Unit)?,
   additionalActions: @Composable RowScope.() -> Unit,
   modifier: Modifier = Modifier,
   onTitleLongPress: (() -> Unit)?,
@@ -248,6 +252,19 @@ private fun NormalTopBar(
     },
     actions = {
       additionalActions()
+      if (onAddConnectionClick != null) {
+        IconButton(
+          onClick = onAddConnectionClick,
+          modifier = Modifier.padding(horizontal = 2.dp),
+        ) {
+          Icon(
+            Icons.Filled.Add,
+            contentDescription = "Add",
+            modifier = Modifier.size(24.dp),
+            tint = MaterialTheme.colorScheme.secondary,
+          )
+        }
+      }
       if (onSearchClick != null) {
         IconButton(
           onClick = onSearchClick,
