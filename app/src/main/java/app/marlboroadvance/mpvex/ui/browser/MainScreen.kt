@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
@@ -44,7 +43,6 @@ import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.ui.browser.folderlist.FolderListScreen
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkStreamingScreen
-import app.marlboroadvance.mpvex.ui.browser.playlist.PlaylistScreen
 import app.marlboroadvance.mpvex.ui.browser.recentlyplayed.RecentlyPlayedScreen
 import app.marlboroadvance.mpvex.ui.browser.selection.SelectionManager
 import kotlinx.coroutines.delay
@@ -201,16 +199,10 @@ object MainScreen : Screen {
               onClick = { selectedTab = 1 }
             )
             NavigationBarItem(
-              icon = { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = stringResource(R.string.playlists)) },
-              label = { Text(stringResource(R.string.playlists)) },
-              selected = selectedTab == 2,
-              onClick = { selectedTab = 2 }
-            )
-            NavigationBarItem(
               icon = { Icon(Icons.Filled.Language, contentDescription = stringResource(R.string.network)) },
               label = { Text(stringResource(R.string.network)) },
-              selected = selectedTab == 3,
-              onClick = { selectedTab = 3 }
+              selected = selectedTab == 2,
+              onClick = { selectedTab = 2 }
             )
           }
         }
@@ -287,8 +279,7 @@ object MainScreen : Screen {
             when (targetTab) {
               0 -> FolderListScreen.Content()
               1 -> RecentlyPlayedScreen.Content()
-              2 -> PlaylistScreen.Content()
-              3 -> NetworkStreamingScreen.Content()
+              2 -> NetworkStreamingScreen.Content()
             }
           }
         }
