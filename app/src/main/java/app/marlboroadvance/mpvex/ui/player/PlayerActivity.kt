@@ -2794,6 +2794,17 @@ class PlayerActivity :
 
     when (keyCode) {
       KeyEvent.KEYCODE_DPAD_UP -> {
+        if (isTrackSheetOpen) {
+          return super.onKeyDown(keyCode, event)
+        }
+        // Playing: speed +0.1x; Paused: default navigation
+        if (viewModel.paused != true) {
+          val currentSpeed = MPVLib.getPropertyDouble("speed") ?: 1.0
+          val newSpeed = (currentSpeed + 0.1).coerceAtMost(4.0)
+          MPVLib.setPropertyDouble("speed", newSpeed)
+          android.widget.Toast.makeText(this, String.format("%.1fx", newSpeed), android.widget.Toast.LENGTH_SHORT).show()
+          return true
+        }
         return super.onKeyDown(keyCode, event)
       }
 
@@ -2806,26 +2817,41 @@ class PlayerActivity :
         }
 
         if (isNoSheetOpen) {
-          when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_RIGHT -> {
-              viewModel.handleRightDoubleTap()
-              return true
-            }
+          // Playing: LEFT/RIGHT = seek, DOWN = speed -0.1x
+          // Paused: all default navigation
+          if (viewModel.paused != true) {
+            when (keyCode) {
+              KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                viewModel.handleRightDoubleTap()
+                return true
+              }
 
-            KeyEvent.KEYCODE_DPAD_LEFT -> {
-              viewModel.handleLeftDoubleTap()
-              return true
+              KeyEvent.KEYCODE_DPAD_LEFT -> {
+                viewModel.handleLeftDoubleTap()
+                return true
+              }
+
+              KeyEvent.KEYCODE_DPAD_DOWN -> {
+                val currentSpeed = MPVLib.getPropertyDouble("speed") ?: 1.0
+                val newSpeed = (currentSpeed - 0.1).coerceAtLeast(0.1)
+                MPVLib.setPropertyDouble("speed", newSpeed)
+                android.widget.Toast.makeText(this, String.format("%.1fx", newSpeed), android.widget.Toast.LENGTH_SHORT).show()
+                return true
+              }
             }
           }
         }
         return super.onKeyDown(keyCode, event)
       }
 
-      KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+      KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
         if (isTrackSheetOpen) {
           return super.onKeyDown(keyCode, event)
         }
-        return super.onKeyDown(keyCode, event)
+        // OK: toggle play/pause + show controls
+        viewModel.pauseUnpause()
+        viewModel.showControls()
+        return true
       }
 
       KeyEvent.KEYCODE_SPACE -> {
