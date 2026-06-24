@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusable
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
@@ -49,10 +50,27 @@ fun NetworkConnectionCard(
   Card(
     modifier = modifier
       .fillMaxWidth()
-      .widthIn(max = 500.dp),
+      .widthIn(max = 500.dp)
+      .then(
+        // Make the entire card focusable and clickable via DPAD when connected
+        // This allows TV remote users to just hit OK on the card to Browse
+        if (isConnected) {
+          Modifier.focusable()
+        } else {
+          Modifier
+        }
+      ),
     colors = CardDefaults.cardColors(
       containerColor = MaterialTheme.colorScheme.surfaceContainer,
     ),
+    onClick = {
+      // DPAD OK on the whole card: Browse if connected, Connect if not
+      if (isConnected) {
+        onBrowse(connection)
+      } else if (!isConnecting) {
+        onConnect(connection)
+      }
+    },
   ) {
     Column(
       modifier = Modifier
@@ -154,7 +172,7 @@ fun NetworkConnectionCard(
         )
       }
 
-      // Connection button
+      // Connection button - single action per card for TV remote
       Row(
         modifier = Modifier
           .fillMaxWidth()
