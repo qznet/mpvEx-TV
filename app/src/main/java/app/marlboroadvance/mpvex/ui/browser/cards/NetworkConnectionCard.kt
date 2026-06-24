@@ -185,38 +185,20 @@ fun NetworkConnectionCard(
           }
 
           isConnected -> {
-            Row(
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            // Browse button only - Disconnect removed for TV remote simplicity
+            FilledTonalButton(
+              onClick = { onBrowse(connection) },
+              colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+              ),
             ) {
-              FilledTonalButton(
-                onClick = { onBrowse(connection) },
-                colors = ButtonDefaults.filledTonalButtonColors(
-                  containerColor = MaterialTheme.colorScheme.primaryContainer,
-                  contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-              ) {
-                Icon(
-                  Icons.Filled.FolderOpen,
-                  contentDescription = null,
-                  modifier = Modifier.padding(end = 8.dp),
-                )
-                Text("Browse")
-              }
-
-              FilledTonalButton(
-                onClick = { onDisconnect(connection) },
-                colors = ButtonDefaults.filledTonalButtonColors(
-                  containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                  contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
-              ) {
-                Icon(
-                  Icons.Filled.LinkOff,
-                  contentDescription = null,
-                  modifier = Modifier.padding(end = 8.dp),
-                )
-                Text("Disconnect")
-              }
+              Icon(
+                Icons.Filled.FolderOpen,
+                contentDescription = null,
+                modifier = Modifier.padding(end = 8.dp),
+              )
+              Text("Browse")
             }
           }
 
