@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -69,6 +70,42 @@ object NetworkStreamingScreen : Screen {
     var editingConnection by remember { mutableStateOf<NetworkConnection?>(null) }
     var copyingConnection by remember { mutableStateOf<NetworkConnection?>(null) }
     val navigationBarHeight = app.marlboroadvance.mpvex.ui.browser.LocalNavigationBarHeight.current
+
+    // Track whether we've already auto-navigated to avoid repeated navigation
+    var hasAutoNavigated by remember { mutableStateOf(false) }
+
+    // Find the first connected connection (auto-connect order)
+    val firstConnectedConnection by remember {
+      derivedStateOf {
+        connections.firstOrNull { conn ->
+          connectionStatuses[conn.id]?.isConnected == true
+        }
+      }
+    }
+
+    // Check if any connection is still connecting (auto-connect in progress)
+    val isAnyConnecting by remember {
+      derivedStateOf {
+        connections.any { conn ->
+          connectionStatuses[conn.id]?.isConnecting == true
+        }
+      }
+    }
+
+    // Auto-navigate: if there's a connected connection, go directly to Browse
+    // Wait for any in-progress auto-connections to finish first
+    LaunchedEffect(firstConnectedConnection, isAnyConnecting, hasAutoNavigated) {
+      if (!hasAutoNavigated && !isAnyConnecting && firstConnectedConnection != null) {
+        hasAutoNavigated = true
+        backstack.add(
+          NetworkBrowserScreen(
+            connectionId = firstConnectedConnection!!.id,
+            connectionName = firstConnectedConnection!!.name,
+            currentPath = "/",
+          ),
+        )
+      }
+    }
 
     // LazyGrid state for scroll tracking
     val gridState = rememberLazyGridState()
