@@ -9,6 +9,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+      actions: write
+
     env:
       MPV_GIT_URL: https://github.com/FongMi/mpv
       MPV_GIT_REF: fongmi
@@ -75,3 +79,20 @@ jobs:
         with:
           name: mpvex-release
           path: app/build/outputs/apk/default/release/*.apk
+
+      - name: Create GitHub Release (v7a + v8a)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          TAG="v${VERSION}-fongmi-r${{ github.run_number }}"
+          gh release create "$TAG" \
+            app/build/outputs/apk/default/release/*.apk \
+            -R qznet/mpvEx-TV \
+            --title "mpv NAS Player ${VERSION} (FongMi kernel) build ${{ github.run_number }}" \
+            --notes "Source-built FongMi/mpv kernel (fongmi branch), armeabi-v7a + arm64-v8a. Built from $(git rev-parse --short HEAD)."
+
+      - name: Skip release on push (manual Run workflow required)
+        if: github.event_name != 'workflow_dispatch'
+        run: echo "Push-triggered build: artifacts uploaded, no release. Use Actions > Run workflow for a release."
