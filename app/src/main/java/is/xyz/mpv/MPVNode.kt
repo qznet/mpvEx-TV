@@ -1,102 +1,70 @@
 package `is`.xyz.mpv
 
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.serializer
 
 /**
  * Represents an MPV node value (MPV_FORMAT_NODE), used for complex property types
  * like track-list and chapter-list.
  *
- * Converted to/from JSON for kotlinx.serialization interop.
+ * qznet's PlayerUtils.kt defines `MPVNode.toObject(json)` which calls [toJson] and
+ * then `json.decodeFromString<T>(...)`. So [toJson] must reproduce mpv's native JSON
+ * shape (a JSON array for node-array, a JSON object for node-map) so that kotlinx
+ * can deserialize it directly into the target data class (e.g. TrackNode).
  */
-@kotlinx.serialization.Serializable
 data class MPVNode(
     val format: Int = 0,
     val string: String? = null,
-    @kotlinx.serialization.Transient
     val int: Long? = null,
-    @kotlinx.serialization.Transient
     val double: Double? = null,
-    @kotlinx.serialization.Transient
     val bool: Boolean? = null,
-    @kotlinx.serialization.Transient
     val nodeArray: List<MPVNode?>? = null,
-    @kotlinx.serialization.Transient
     val nodeMap: Map<String, MPVNode?>? = null
-)
-
-/**
- * Convert this MPVNode to a JSON string, then deserialize as T using kotlinx.serialization.
- */
-inline fun <reified T> MPVNode?.toObject(json: Json): T {
-    if (this == null) {
-        return json.decodeFromString("null")
-    }
-    val jsonString = json.encodeToString(serializer<MPVNode>(), this)
-    return json.decodeFromString(jsonString)
-}
-
-/** Convert a JsonElement to MPVNode */
-fun JsonElement.toMPVNode(): MPVNode = when (this) {
-    is JsonPrimitive -> {
-        when {
-            isString -> MPVNode(format = 1, string = contentOrNull)
-            contentOrNull.toBooleanStrictOrNull() != null ->
-                MPVNode(format = 3, bool = booleanOrNull)
-            contentOrNull.toLongOrNull() != null ->
-                MPVNode(format = 4, int = longOrNull)
-            else -> MPVNode(format = 5, double = doubleOrNull)
-        }
-    }
-    else -> this
-}
-
-/** Convert MPVNode to kotlinx.serialization JsonElement for encoding */
-fun MPVNode.toJsonElement(): JsonElement {
-    return when (format) {
-        1 -> JsonPrimitive(string ?: "")
-        3 -> JsonPrimitive(bool ?: false)
-        4 -> JsonPrimitive(int ?: 0L)
-        5 -> JsonPrimitive(double ?: 0.0)
-        7 -> JsonPrimitive(nodeArray?.map { it?.toJsonElement() }
-            ?: emptyList<JsonElement>())
-        8 -> JsonPrimitive(nodeMap?.entries?.associate { it.key to it.value?.toJsonElement() }
-            ?: emptyMap<String, JsonElement>())
-        else -> JsonPrimitive("")
-    }
-}
-
-/**
- * Serialize this MPVNode to a JSON string.
- * Used by qznet PlayerUtils.kt for deserializing MPV node data.
- */
-fun MPVNode.toJson(): String {
-    val sb = StringBuilder()
-    fun serialize(node: MPVNode): String {
-        return when (node.format) {
-            1 -> "\"" + (node.string ?: "")
+) {
+    /** Serialize this node back to mpv's native JSON representation. */
+    fun toJson(): String {
+        fun ser(n: MPVNode): String = when (n.format) {
+            1 -> "\"" + (n.string ?: "")
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"")
                 .replace("\n", "\\n")
                 .replace("\r", "\\r") + "\""
-            3, 4 -> (node.int ?: 0L).toString()
-            5 -> (node.double ?: 0.0).toString()
-            6 -> (node.bool ?: false).toString()
-            7 -> "[" + (node.nodeArray?.mapNotNull { n -> if (n != null) serialize(n) else null }?.joinToString(",") ?: "") + "]"
-            8 -> "{" + (node.nodeMap?.entries?.joinToString(",") { kvp -> "\"" + kvp.key + "\":" + if (kvp.value != null) serialize(kvp.value!!) else "null" } ?: "") + "}"
+            3 -> if (n.bool == true) "true" else "false"
+            4 -> (n.int ?: 0L).toString()
+            5 -> (n.double ?: 0.0).toString()
+            7 -> "[" + (n.nodeArray?.mapNotNull { it?.let(ser) }?.joinToString(",") ?: "") + "]"
+            8 -> "{" + (n.nodeMap?.entries?.joinToString(",") { "\"${it.key}\":" + (it.value?.let(ser) ?: "null") } ?: "") + "}"
             else -> "null"
         }
+        return ser(this)
     }
-    return serialize(this)
+
+    companion object {
+        /** Parse mpv's node JSON string into an MPVNode. Returns null on failure. */
+        fun fromJsonString(s: String): MPVNode? = runCatching {
+            fromJsonElement(Json.parseToJsonElement(s))
+        }.getOrNull()
+
+        fun fromJsonElement(elem: JsonElement): MPVNode = when (elem) {
+            is JsonNull -> MPVNode(format = 0)
+            is JsonPrimitive -> when {
+                elem.isString -> MPVNode(format = 1, string = elem.content)
+                elem.content.equals("true", true) || elem.content.equals("false", true) ->
+                    MPVNode(format = 3, bool = elem.content.equals("true", true))
+                elem.content.toLongOrNull() != null ->
+                    MPVNode(format = 4, int = elem.content.toLong())
+                elem.content.toDoubleOrNull() != null ->
+                    MPVNode(format = 5, double = elem.content.toDouble())
+                else -> MPVNode(format = 0)
+            }
+            is JsonArray ->
+                MPVNode(format = 7, nodeArray = elem.map { if (it is JsonNull) null else fromJsonElement(it) })
+            is JsonObject ->
+                MPVNode(format = 8, nodeMap = elem.mapValues { if (it.value is JsonNull) null else fromJsonElement(it.value) })
+        }
+    }
 }

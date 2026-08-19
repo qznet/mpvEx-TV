@@ -10,78 +10,71 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Fast thumbnail generation using mpv's screenshot API (native) with fallback to
- * MediaMetadataRetriever.
+ * Fast thumbnail generation for the media library grid.
  *
- * Usage: FastThumbnails.generateAsync(context, uri, dimension)
+ * qznet's ThumbnailRepository calls:
+ *   FastThumbnails.initialize(context)
+ *   FastThumbnails.generateAsync(path, positionSec, dimension, useHwDec = false)
+ *
+ * We extract a frame at [positionSec] using MediaMetadataRetriever (works for local
+ * files and http URLs). The mpv-native path is not available outside an active playback
+ * session, so it is intentionally not used here; on failure ThumbnailRepository falls
+ * back to MediaStore.
  */
 object FastThumbnails {
     private const val TAG = "FastThumbnails"
+    private var appContext: Context? = null
 
-    /**
-     * Suspending version of generate.
-     * First tries the native mpv screenshot API; falls back to MediaMetadataRetriever.
-     * @param context Android context
-     * @param uri URI of the media file (local file:// or content://)
-     * @param dimension Target thumbnail dimension (width and height, the thumbnail will be a square of this size)
-     * @return Bitmap or null if generation failed
-     */
-    suspend fun generateAsync(
-        context: Context,
-        uri: Uri,
-        dimension: Int = 256
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        // Try native mpv screenshot first
-        val nativeBmp = try {
-            MPVLib.grabThumbnail(dimension)
-        } catch (e: Exception) {
-            null
-        }
-
-        if (nativeBmp != null) {
-            return@withContext nativeBmp
-        }
-
-        // Fallback to MediaMetadataRetriever (only works for local files)
-        generateWithMediaStore(context, uri, dimension)
+    fun initialize(context: Context) {
+        appContext = context.applicationContext
     }
 
-    /**
-     * Generate thumbnail using MediaMetadataRetriever.
-     * Only works for local content:// or file:// URIs.
-     */
-    private fun generateWithMediaStore(
-        context: Context,
-        uri: Uri,
-        dimension: Int
-    ): Bitmap? {
-        return try {
+    suspend fun generateAsync(
+        path: String,
+        positionSec: Double,
+        dimension: Int,
+        useHwDec: Boolean = false,
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        @Suppress("UNUSED_PARAMETER")
+        val _hw = useHwDec
+        try {
             val retriever = MediaMetadataRetriever()
-            retriever.setDataSource(context, uri)
+            when {
+                path.startsWith("content://") -> {
+                    val ctx = appContext
+                    if (ctx != null) {
+                        retriever.setDataSource(ctx, Uri.parse(path))
+                    } else {
+                        retriever.setDataSource(path)
+                    }
+                }
+                path.startsWith("file://") -> retriever.setDataSource(path)
+                else -> retriever.setDataSource(File(path).absolutePath)
+            }
 
-            // Try to extract a frame at 10% of the duration (usually a meaningful frame)
-            val durationMs = retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_DURATION
-            )?.toLongOrNull() ?: 0L
-
-            val seekToMs = (durationMs * 0.1).toLong()
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+            val seekUs = if (positionSec > 0) {
+                (positionSec * 1000.0 * 1000.0).toLong()
+            } else {
+                (durationMs * 0.1 * 1000.0).toLong()
+            }
 
             val frame = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 retriever.getScaledFrameAtTime(
-                    seekToMs * 1000, // microseconds
+                    seekUs,
                     MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
                     dimension,
-                    dimension
+                    dimension,
                 )
             } else {
                 @Suppress("DEPRECATION")
-                retriever.getFrameAtTime(seekToMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                retriever.getFrameAtTime(seekUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
             }
-
             retriever.release()
             frame
         } catch (e: Exception) {
-            android.util.Log.w(TAG, "MediaMetadataRetriever failed for $uri", e)
+            android.util.Log.w(TAG, "generateAsync failed for $path", e)
             null
         }
     }
