@@ -56,11 +56,13 @@ jobs:
       - name: Accept Android SDK licenses
         run: |
           export ANDROID_HOME=$PWD/buildscripts/sdk/android-sdk-linux
+          export ANDROID_SDK_ROOT=$PWD/buildscripts/sdk/android-sdk-linux
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Build defaultDebug APK
         run: |
           export ANDROID_HOME=$PWD/buildscripts/sdk/android-sdk-linux
+          export ANDROID_SDK_ROOT=$PWD/buildscripts/sdk/android-sdk-linux
           ./gradlew assembleDefaultDebug
 
       - name: Upload Debug APK
@@ -72,6 +74,7 @@ jobs:
       - name: Build defaultRelease APK
         run: |
           export ANDROID_HOME=$PWD/buildscripts/sdk/android-sdk-linux
+          export ANDROID_SDK_ROOT=$PWD/buildscripts/sdk/android-sdk-linux
           ./gradlew assembleDefaultRelease
 
       - name: Upload Release APK
@@ -95,4 +98,5 @@ jobs:
 
       - name: Skip release on push (manual Run workflow required)
         if: github.event_name != 'workflow_dispatch'
-        run: echo "Push-triggered build: artifacts uploaded, no release. Use Actions > Run workflow for a release."
+        run: |
+          echo "Push-triggered build: artifacts uploaded, no release. Use Actions > Run workflow for a release."
