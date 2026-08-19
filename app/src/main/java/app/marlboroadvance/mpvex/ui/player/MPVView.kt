@@ -99,12 +99,19 @@ class MPVView(
     MPVLib.setOptionString("profile", profile)
     val useVulkan = decoderPreferences.useVulkan.get()
     val useGpuNext = useVulkan || decoderPreferences.gpuNext.get()
-    setVo(if (useGpuNext) "gpu-next" else "gpu")
     
-    // Set GPU API context (Vulkan or OpenGL)
+    // Do NOT override vo here - let mpv.conf decide (supports mediacodec_embed)
+    // If user did not set vo in mpv.conf, set default after init
+    // setVo(if (useGpuNext) "gpu-next" else "gpu")
+    
+    // Set GPU API context (Vulkan or OpenGL) if using gpu/gpu-next
+    // (mediacodec_embed ignores these settings)
     if (useVulkan) {
       MPVLib.setOptionString("gpu-api", "vulkan")
       MPVLib.setOptionString("gpu-context", "androidvk")
+    } else if (useGpuNext) {
+      MPVLib.setOptionString("gpu-api", "vulkan")
+      MPVLib.setOptionString("gpu-context", "android")
     }
 
     // Default to copy-back decoding on Android. This is slower on paper than
@@ -119,7 +126,7 @@ class MPVView(
     if (decoderPreferences.useYUV420P.get()) {
       MPVLib.setOptionString("vf", "format=yuv420p")
     }
-    
+
     // Cap demuxer cache for mobile to prevent memory issues.
     // gpu-next on Android benefits from a slightly deeper queue to reduce
     // AImageReader timeout spikes when the decoder/render threads jitter.
@@ -133,7 +140,7 @@ class MPVView(
     if (useGpuNext) {
       configureGpuNextTimingBuffer()
     }
-    
+
     val logLevel = if (advancedPreferences.verboseLogging.get()) "v" else "warn"
     MPVLib.setOptionString("msg-level", "all=$logLevel")
 
@@ -265,7 +272,7 @@ class MPVView(
     MPVLib.setOptionString("audio-delay", (audioPreferences.defaultAudioDelay.get() / 1000.0).toString())
     MPVLib.setOptionString("audio-pitch-correction", audioPreferences.audioPitchCorrection.get().toString())
     MPVLib.setOptionString("volume-max", (audioPreferences.volumeBoostCap.get() + 100).toString())
-    
+
     // Volume normalization using dynamic audio normalization filter
     if (audioPreferences.volumeNormalization.get()) {
       MPVLib.setOptionString("af", "dynaudnorm")
@@ -283,7 +290,7 @@ class MPVView(
 
     val fontsDirPath = "${context.filesDir.path}/fonts/"
     MPVLib.setOptionString("sub-fonts-dir", fontsDirPath)
-    
+
     // Delay and speed for both primary and secondary
     val subDelay = (subtitlesPreferences.defaultSubDelay.get() / 1000.0).toString()
     val subSpeed = subtitlesPreferences.defaultSubSpeed.get().toString()
@@ -334,7 +341,7 @@ class MPVView(
     MPVLib.setOptionString("sub-shadow-offset", shadowOffset)
     MPVLib.setOptionString("sub-scale", subScale)
     MPVLib.setOptionString("sub-pos", subPos)
-    
+
     MPVLib.setOptionString("secondary-sub-font-size", fontSize)
     MPVLib.setOptionString("secondary-sub-bold", bold)
     MPVLib.setOptionString("secondary-sub-italic", italic)
@@ -363,44 +370,44 @@ class MPVView(
       if (!enabled) {
         return
       }
-      
+
       // Anime4K requires the legacy GPU path unless gpu-next is running on Vulkan.
       val gpuNextActive = decoderPreferences.gpuNext.get()
       val useVulkan = decoderPreferences.useVulkan.get()
       if (gpuNextActive && !useVulkan) {
         return  // Abort shader loading to prevent incompatible state
       }
-      
+
       // Initialize shader files if needed - THIS IS CRITICAL!
       if (!anime4kManager.initialize()) {
         return
       }
-      
+
       // Get preferences
       val modeStr = decoderPreferences.anime4kMode.get()
-      
+
       // Check if mode is OFF - if so, don't apply any shaders
       if (modeStr == "OFF") {
         return  // Exit early - user wants it OFF
       }
-      
+
       // Parse user's selected mode
       val mode = try {
           Anime4KManager.Mode.valueOf(modeStr)
       } catch (e: IllegalArgumentException) {
           Anime4KManager.Mode.OFF
       }
-      
+
       val qualityStr = decoderPreferences.anime4kQuality.get()
       val quality = try {
         Anime4KManager.Quality.valueOf(qualityStr)
       } catch (e: IllegalArgumentException) {
         Anime4KManager.Quality.BALANCED
       }
-      
+
       // Get shader chain from manager
       val shaderChain = anime4kManager.getShaderChain(mode, quality)
-      
+
       if (shaderChain.isNotEmpty()) {
         // OpenGL-only tuning should not be pushed onto the Vulkan backend.
         if (!useVulkan) {
@@ -408,7 +415,7 @@ class MPVView(
           MPVLib.setOptionString("opengl-early-flush", "no")
         }
         MPVLib.setOptionString("vd-lavc-dr", "yes")
-        
+
         // Apply shaders (MUST use setOptionString in initOptions!)
         MPVLib.setOptionString("glsl-shaders", shaderChain)
       }

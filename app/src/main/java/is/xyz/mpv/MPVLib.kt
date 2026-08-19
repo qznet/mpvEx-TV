@@ -265,14 +265,14 @@ object MPVLib {
     // ---- Interfaces ----
 
     interface EventObserver {
-        fun eventProperty(property: String)
-        fun eventProperty(property: String, value: Long)
-        fun eventProperty(property: String, value: Boolean)
-        fun eventProperty(property: String, value: String)
-        fun eventProperty(property: String, value: Double)
+        fun eventProperty(property: String) {}
+        fun eventProperty(property: String, value: Long) {}
+        fun eventProperty(property: String, value: Boolean) {}
+        fun eventProperty(property: String, value: String) {}
+        fun eventProperty(property: String, value: Double) {}
         // qznet UI callback for MPVNode; native (FongMi) does not fire this directly.
         fun eventProperty(property: String, value: MPVNode) {}
-        fun event(eventId: Int)
+        fun event(eventId: Int) {}
         // qznet UI callback for event data; native does not fire this directly.
         fun event(eventId: Int, data: MPVNode) {}
         fun eventCommandReply(requestId: Long, error: Int) {}

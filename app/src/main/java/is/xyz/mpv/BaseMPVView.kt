@@ -86,12 +86,12 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // This forces mpv to render subs/osd/whatever into our surface even if it would ordinarily not
         MPVLib.setOptionString("force-window", "yes")
 
+        // Ensure VO is set before loadfile (critical for mediacodec_embed)
+        MPVLib.setPropertyString("vo", voInUse)
+
         if (filePath != null) {
             MPVLib.command("loadfile", filePath as String)
             filePath = null
-        } else {
-            // We disable video output when the context disappears, enable it back
-            MPVLib.setPropertyString("vo", voInUse)
         }
     }
 
