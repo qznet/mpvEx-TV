@@ -112,9 +112,33 @@ The app generates multiple APK variants for different CPU architectures:
 
 ---
 
+## Build & Release via GitHub Actions
+
+The recommended way to produce a signed APK is to let CI compile the FongMi source kernel and publish a Release. **No local Android SDK/NDK is required.**
+
+### Method 1 — GitHub web UI (easiest)
+
+1. Open **Actions → Build APK** in this repo.
+2. Click **Run workflow**.
+3. Make sure the branch is **`fongmi-kernel`** (the branch that ships the source-built FongMi kernel — `main` does not build it).
+4. Click the green **Run workflow**.
+5. Wait for the build to finish (the native FFmpeg/mpv compile takes ~20–40 min). When it completes, a new GitHub Release appears under **Releases** with the tag `v<version>-fongmi-r<run#>` and contains the `armeabi-v7a` + `arm64-v8a` release APKs. Install the one matching your TV.
+
+### Method 2 — `gh` CLI
+
+```bash
+gh workflow run "Build APK" -R qznet/mpvEx-TV -r fongmi-kernel
+```
+
+> Only a **manual** workflow run publishes a Release. Pushing to `fongmi-kernel` triggers a build for verification but does **not** create a Release. The kernel is cloned fresh from `FongMi/mpv@fongmi` on every build, so each run automatically uses the latest kernel.
+
+---
+
 ## Releases
 
-### Creating a Release
+> Releases are created automatically by the GitHub Actions **Build APK** workflow (see [Build & Release via GitHub Actions](#build--release-via-github-actions) above): a manual run publishes the `armeabi-v7a` + `arm64-v8a` release APKs; a plain push only builds for verification.
+
+### Creating a Release (manual / reference)
 
 1. Update `versionCode` and `versionName` in `app/build.gradle.kts`
 2. Build the release APK:
