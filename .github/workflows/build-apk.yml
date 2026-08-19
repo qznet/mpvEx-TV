@@ -9,6 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     permissions:
       contents: write
@@ -32,9 +33,10 @@ jobs:
 
       - name: Install native build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y autoconf pkg-config libtool ninja-build cmake unzip wget gperf
-          pip3 install meson
+          # Wrap apt-get update with a hard timeout so a hung mirror can't block the build for hours
+          timeout 180 sudo apt-get update || echo "[warn] apt-get update timed out, falling back to cached package index"
+          sudo apt-get install -y --no-install-recommends autoconf pkg-config libtool ninja-build cmake unzip wget gperf
+          pip3 install --break-system-packages meson || pip3 install meson || true
 
       - name: Cache Gradle packages
         uses: actions/cache@v5
