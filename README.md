@@ -1,18 +1,35 @@
 ![banner](fastlane/metadata/android/en-US/images/featureGraphic.png)
 
 # mpvExtended
-[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/XIONGPEILIN/mpvEx.svg?logo=github&label=GitHub&cacheSeconds=3600)](https://github.com/XIONGPEILIN/mpvEx/releases/latest)
-[![GitHub all releases](https://img.shields.io/github/downloads/XIONGPEILIN/mpvEx/total?logo=github&cacheSeconds=3600)](https://github.com/XIONGPEILIN/mpvEx/releases/latest)
+[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/qznet/mpvEx-TV.svg?logo=github&label=GitHub&cacheSeconds=3600)](https://github.com/qznet/mpvEx-TV/releases/latest)
+[![GitHub all releases](https://img.shields.io/github/downloads/qznet/mpvEx-TV/total?logo=github&cacheSeconds=3600)](https://github.com/qznet/mpvEx-TV/releases/latest)
 
 
 **mpvExtended is a fork of [mpv-android](https://github.com/mpv-android/mpv-android), built on the libmpv library. It aims
+
+> **This repo (`qznet/mpvEx-TV`) is a TV-remote adapted fork.** It swaps the bundled prebuilt mpv AAR for a **source-built [FongMi/mpv](https://github.com/FongMi/mpv) kernel (`fongmi` branch)**, built with [FongMi/mpv-android](https://github.com/FongMi/mpv-android) buildscripts. See [Custom playback kernel](#custom-playback-kernel) below.
 to combine the powerful features of mpv with an easy to use interface and additional
 features.**
+
+## Custom playback kernel
+
+This fork does **not** ship the prebuilt `mpv-android` AAR. Instead the native player is compiled from source by CI:
+
+- **Kernel source:** [FongMi/mpv](https://github.com/FongMi/mpv) @ `fongmi` branch (Dolby Vision Profile 5/7 GPU mapping, AV1/Vulkan improvements, newer FFmpeg).
+- **Build system:** [FongMi/mpv-android](https://github.com/FongMi/mpv-android) @ `fongmi` buildscripts (FFmpeg `release-9.0-fongmi`, CMake, extra deps: libaribcaption/libbluray/libarchive/libdvdnav/curl/uchardet/…).
+- **JNI bridge:** `app/src/main/jni/` compiles `libplayer.so` + `libmpv.so`; the Java bindings live in `app/src/main/java/is/xyz/mpv/` (vendored from FongMi).
+- **ABI:** only `armeabi-v7a` and `arm64-v8a` are built (TV target; FongMi's artifact/build only covers arm).
+- The kernel source is **cloned fresh on every CI build**, so rebuilds always track the latest `fongmi` commit automatically.
 
 ## Upstream
 
 This fork uses [mpv-android](https://github.com/mpv-android/mpv-android) as the canonical upstream for future sync work.
 The old `mpvEx` fork is not treated as upstream.
+
+Synced from two upstreams on every rebuild (see [Upstream sync policy](#upstream-sync-policy)):
+
+- **App / UI:** [XIONGPEILIN/mpvExtended-android](https://github.com/XIONGPEILIN/mpvExtended-android) (this fork's direct parent).
+- **Playback kernel:** [FongMi/mpv](https://github.com/FongMi/mpv) `fongmi` (source, fetched at build time) + [FongMi/mpv-android](https://github.com/FongMi/mpv-android) `fongmi` (buildscripts, re-vendored when changed).
 
 Typical sync flow:
 
@@ -88,11 +105,10 @@ Or you can get the stable releases here
 
 The app generates multiple APK variants for different CPU architectures:
 
-- **universal**: Works on all devices (larger size)
 - **arm64-v8a**: Modern 64-bit ARM devices (recommended for most users)
 - **armeabi-v7a**: Older 32-bit ARM devices
-- **x86**: Intel/AMD 32-bit devices
-- **x86_64**: Intel/AMD 64-bit devices
+
+> x86 / x86_64 variants are intentionally not built (TV target; the FongMi kernel build only covers arm).
 
 ---
 
@@ -118,13 +134,12 @@ The app generates multiple APK variants for different CPU architectures:
    gh release create vx.x.x \
      app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk \
      app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk \
-     app/build/outputs/apk/default/release/app-default-universal-release.apk \
-     app/build/outputs/apk/default/release/app-default-x86_64-release.apk \
-     app/build/outputs/apk/default/release/app-default-x86-release.apk \
-     --repo XIONGPEILIN/mpvExtended-android \
-     --title "mpv NAS Player vx.x.x" \
-     --notes "mpv NAS Player vx.x.x"
+     --repo qznet/mpvEx-TV \
+     --title "mpv NAS Player vx.x.x (FongMi kernel)" \
+     --notes "mpv NAS Player vx.x.x — source-built FongMi/mpv kernel"
    ```
+
+   > For this fork the published artifacts are **only `armeabi-v7a` + `arm64-v8a`** APKs (no x86/universal), released on `qznet/mpvEx-TV`.
 
 ---
 
@@ -134,6 +149,17 @@ The app generates multiple APK variants for different CPU architectures:
 - [mpvKt](https://github.com/abdallahmehiz/mpvKt)
 - [Next player](https://github.com/anilbeesetti/nextplayer)
 - [Gramophone](https://github.com/FoedusProgramme/Gramophone)
+
+## Upstream sync policy
+
+This fork is kept in sync with upstream automatically on every rebuild:
+
+- **Kernel (`FongMi/mpv` @ `fongmi`):** fetched fresh at build time — always latest, no manual step.
+- **Buildscripts (`FongMi/mpv-android` @ `fongmi`):** re-vendored into `buildscripts/` when the upstream commit changes.
+- **App / UI (`XIONGPEILIN/mpvExtended-android`):** upstream commits are merged into this branch when they change (conflict-free merge; conflicts are reported for manual resolution).
+
+A scheduled check detects new upstream commits and triggers a rebuild + release. Tracked refs:
+`FongMi/mpv@fongmi`, `FongMi/mpv-android@fongmi`, `XIONGPEILIN/mpvExtended-android@main`.
 
 ## Star History <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Travel%20and%20places/Star.png" alt="Star" width="25" height="25" />
 
