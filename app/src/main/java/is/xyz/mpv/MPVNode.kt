@@ -36,8 +36,8 @@ data class MPVNode(
             3 -> if (n.bool == true) "true" else "false"
             4 -> (n.int ?: 0L).toString()
             5 -> (n.double ?: 0.0).toString()
-            7 -> "[" + (n.nodeArray?.mapNotNull { it?.let(ser) }?.joinToString(",") ?: "") + "]"
-            8 -> "{" + (n.nodeMap?.entries?.joinToString(",") { "\"${it.key}\":" + (it.value?.let(ser) ?: "null") } ?: "") + "}"
+            7 -> "[" + (n.nodeArray?.mapNotNull { node -> node?.let { ser(it) } }?.joinToString(",") ?: "") + "]"
+            8 -> "{" + (n.nodeMap?.entries?.joinToString(",") { "\"${it.key}\":" + (it.value?.let { ser(it) } ?: "null") } ?: "") + "}"
             else -> "null"
         }
         return ser(this)

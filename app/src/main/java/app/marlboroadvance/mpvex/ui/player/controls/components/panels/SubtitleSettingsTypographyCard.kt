@@ -1,4 +1,4 @@
-package app.marlboroadvance.mpvex.ui.player.controls.components.panels
+﻿package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
 import android.annotation.SuppressLint
 import androidx.annotation.StringRes
@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import app.marlboroadvance.mpvex.ui.player.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf

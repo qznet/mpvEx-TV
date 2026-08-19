@@ -3,9 +3,8 @@ package `is`.xyz.mpv
 import android.content.Context
 import android.graphics.Bitmap
 import android.view.Surface
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.StateFlow
 
 // Wrapper for native library
 
@@ -56,86 +55,74 @@ object MPVLib {
 
     external fun observeProperty(property: String, format: Int): Int
 
-    // ---- Property flow registry (Kotlin-side StateFlows driven by native events) ----
+    // ---- Typed property StateFlows (driven by native events through observeProperty) ----
 
-    private val propertyFlows = mutableMapOf<String, MutableStateFlow<Any?>>()
+    private val intFlows = mutableMapOf<String, MutableStateFlow<Int?>>()
+    private val doubleFlows = mutableMapOf<String, MutableStateFlow<Double?>>()
+    private val boolFlows = mutableMapOf<String, MutableStateFlow<Boolean?>>()
+    private val stringFlows = mutableMapOf<String, MutableStateFlow<String?>>()
+    private val floatFlows = mutableMapOf<String, MutableStateFlow<Float?>>()
+    private val nodeFlows = mutableMapOf<String, MutableStateFlow<MPVNode?>>()
 
-    private fun getOrCreateFlow(property: String, format: Int): MutableStateFlow<Any?> {
-        synchronized(propertyFlows) {
-            propertyFlows[property]?.let { return it }
-            val flow = MutableStateFlow<Any?>(null)
-            propertyFlows[property] = flow
-            observeProperty(property, format)
-            return flow
+    private fun intFlow(property: String): MutableStateFlow<Int?> =
+        intFlows.getOrPut(property) {
+            MutableStateFlow<Int?>(null).also { observeProperty(property, MpvFormat.MPV_FORMAT_INT64) }
         }
-    }
 
-    private fun emit(property: String, value: Any?) {
-        synchronized(propertyFlows) {
-            propertyFlows[property]?.value = value
+    private fun doubleFlow(property: String): MutableStateFlow<Double?> =
+        doubleFlows.getOrPut(property) {
+            MutableStateFlow<Double?>(null).also { observeProperty(property, MpvFormat.MPV_FORMAT_DOUBLE) }
         }
-    }
 
-    // propInt: Flow<Int?> (native fires INT64 -> Long, read as Int)
+    private fun boolFlow(property: String): MutableStateFlow<Boolean?> =
+        boolFlows.getOrPut(property) {
+            MutableStateFlow<Boolean?>(null).also { observeProperty(property, MpvFormat.MPV_FORMAT_FLAG) }
+        }
+
+    private fun stringFlow(property: String): MutableStateFlow<String?> =
+        stringFlows.getOrPut(property) {
+            MutableStateFlow<String?>(null).also { observeProperty(property, MpvFormat.MPV_FORMAT_STRING) }
+        }
+
+    private fun floatFlow(property: String): MutableStateFlow<Float?> =
+        floatFlows.getOrPut(property) {
+            MutableStateFlow<Float?>(null).also { observeProperty(property, MpvFormat.MPV_FORMAT_DOUBLE) }
+        }
+
+    private fun nodeFlow(property: String): MutableStateFlow<MPVNode?> =
+        nodeFlows.getOrPut(property) {
+            // Observe as STRING: mpv serializes NODE properties to JSON, which we parse into MPVNode.
+            MutableStateFlow<MPVNode?>(null).also { observeProperty(property, MpvFormat.MPV_FORMAT_STRING) }
+        }
+
+    // propInt: StateFlow<Int?>
     object propInt {
-        private val cache = mutableMapOf<String, Flow<Int?>>()
-        operator fun get(property: String): Flow<Int?> = synchronized(cache) {
-            cache.getOrPut(property) {
-                getOrCreateFlow(property, MpvFormat.MPV_FORMAT_INT64).map { (it as? Number)?.toInt() }
-            }
-        }
+        operator fun get(property: String): StateFlow<Int?> = intFlow(property)
     }
 
-    // propDouble: Flow<Double?>
+    // propDouble: StateFlow<Double?>
     object propDouble {
-        private val cache = mutableMapOf<String, Flow<Double?>>()
-        operator fun get(property: String): Flow<Double?> = synchronized(cache) {
-            cache.getOrPut(property) {
-                getOrCreateFlow(property, MpvFormat.MPV_FORMAT_DOUBLE).map { it as? Double }
-            }
-        }
+        operator fun get(property: String): StateFlow<Double?> = doubleFlow(property)
     }
 
-    // propBoolean: Flow<Boolean?>
+    // propBoolean: StateFlow<Boolean?>
     object propBoolean {
-        private val cache = mutableMapOf<String, Flow<Boolean?>>()
-        operator fun get(property: String): Flow<Boolean?> = synchronized(cache) {
-            cache.getOrPut(property) {
-                getOrCreateFlow(property, MpvFormat.MPV_FORMAT_FLAG).map { it as? Boolean }
-            }
-        }
+        operator fun get(property: String): StateFlow<Boolean?> = boolFlow(property)
     }
 
-    // propString: Flow<String?>
+    // propString: StateFlow<String?>
     object propString {
-        private val cache = mutableMapOf<String, Flow<String?>>()
-        operator fun get(property: String): Flow<String?> = synchronized(cache) {
-            cache.getOrPut(property) {
-                getOrCreateFlow(property, MpvFormat.MPV_FORMAT_STRING).map { it as? String }
-            }
-        }
+        operator fun get(property: String): StateFlow<String?> = stringFlow(property)
     }
 
-    // propFloat: Flow<Float?> (observe as DOUBLE, convert on read)
+    // propFloat: StateFlow<Float?> (observed as DOUBLE, converted on read)
     object propFloat {
-        private val cache = mutableMapOf<String, Flow<Float?>>()
-        operator fun get(property: String): Flow<Float?> = synchronized(cache) {
-            cache.getOrPut(property) {
-                getOrCreateFlow(property, MpvFormat.MPV_FORMAT_DOUBLE).map { (it as? Number)?.toFloat() }
-            }
-        }
+        operator fun get(property: String): StateFlow<Float?> = floatFlow(property)
     }
 
-    // propNode: Flow<MPVNode?> (observe as STRING; mpv serializes NODE props to JSON)
+    // propNode: StateFlow<MPVNode?> (observed as STRING, parsed from mpv JSON)
     object propNode {
-        private val cache = mutableMapOf<String, Flow<MPVNode?>>()
-        operator fun get(property: String): Flow<MPVNode?> = synchronized(cache) {
-            cache.getOrPut(property) {
-                getOrCreateFlow(property, MpvFormat.MPV_FORMAT_STRING).map { v ->
-                    (v as? String)?.let { MPVNode.fromJsonString(it) }
-                }
-            }
-        }
+        operator fun get(property: String): StateFlow<MPVNode?> = nodeFlow(property)
     }
 
     // ---- Observer management ----
@@ -158,7 +145,7 @@ object MPVLib {
 
     @JvmStatic
     fun eventProperty(property: String, value: Long) {
-        emit(property, value)
+        intFlows[property]?.value = value.toInt()
         synchronized(observers) {
             for (o in observers)
                 o.eventProperty(property, value)
@@ -167,7 +154,7 @@ object MPVLib {
 
     @JvmStatic
     fun eventProperty(property: String, value: Boolean) {
-        emit(property, value)
+        boolFlows[property]?.value = value
         synchronized(observers) {
             for (o in observers)
                 o.eventProperty(property, value)
@@ -176,7 +163,8 @@ object MPVLib {
 
     @JvmStatic
     fun eventProperty(property: String, value: Double) {
-        emit(property, value)
+        doubleFlows[property]?.value = value
+        floatFlows[property]?.value = value.toFloat()
         synchronized(observers) {
             for (o in observers)
                 o.eventProperty(property, value)
@@ -185,7 +173,8 @@ object MPVLib {
 
     @JvmStatic
     fun eventProperty(property: String, value: String) {
-        emit(property, value)
+        stringFlows[property]?.value = value
+        nodeFlows[property]?.value = MPVNode.fromJsonString(value)
         synchronized(observers) {
             for (o in observers)
                 o.eventProperty(property, value)
@@ -194,7 +183,7 @@ object MPVLib {
 
     @JvmStatic
     fun eventProperty(property: String, value: MPVNode) {
-        emit(property, value)
+        nodeFlows[property]?.value = value
         synchronized(observers) {
             for (o in observers)
                 o.eventProperty(property, value)
@@ -203,7 +192,12 @@ object MPVLib {
 
     @JvmStatic
     fun eventProperty(property: String) {
-        emit(property, null)
+        intFlows[property]?.value = null
+        doubleFlows[property]?.value = null
+        boolFlows[property]?.value = null
+        stringFlows[property]?.value = null
+        floatFlows[property]?.value = null
+        nodeFlows[property]?.value = null
         synchronized(observers) {
             for (o in observers)
                 o.eventProperty(property)

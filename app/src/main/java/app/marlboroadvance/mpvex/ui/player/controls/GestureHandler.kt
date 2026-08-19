@@ -1,4 +1,4 @@
-package app.marlboroadvance.mpvex.ui.player.controls
+﻿package app.marlboroadvance.mpvex.ui.player.controls
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import app.marlboroadvance.mpvex.ui.player.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -696,7 +697,7 @@ fun GestureHandler(
               val midY = (p1.y + p2.y) / 2f
 
               if (prevDist == 0f) {
-                // First frame — capture baseline
+                // First frame 鈥?capture baseline
                 prevDist = dist
                 zoom = MPVLib.getPropertyDouble("video-zoom")?.toFloat() ?: 0f
                 prevMidX = midX
@@ -709,7 +710,7 @@ fun GestureHandler(
                 }
 
                 if (gestureStarted) {
-                  // Per-frame zoom: small delta from previous distance → naturally smooth
+                  // Per-frame zoom: small delta from previous distance 鈫?naturally smooth
                   val zoomDelta = ln((dist / prevDist).toDouble()).toFloat() * 1.2f
                   zoom = (zoom + zoomDelta).coerceIn(-1f, 3f)
                   viewModel.setVideoZoom(zoom)

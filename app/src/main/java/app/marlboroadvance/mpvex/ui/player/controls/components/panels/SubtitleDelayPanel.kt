@@ -1,4 +1,4 @@
-package app.marlboroadvance.mpvex.ui.player.controls.components.panels
+﻿package app.marlboroadvance.mpvex.ui.player.controls.components.panels
 
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateContentSize
@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import app.marlboroadvance.mpvex.ui.player.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
