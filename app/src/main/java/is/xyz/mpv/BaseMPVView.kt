@@ -16,14 +16,14 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      * attached or mediacodec_embed fails with
      * "No Android OSD Surface is attached for direct MediaCodec output."
      */
-    protected var osdSurfaceView: SurfaceView? = null
+    protected var osdSurface: SurfaceView? = null
 
     /**
      * Wire up a separate OSD SurfaceView. Its surface is attached/detached via
      * MPVLib.attachOsdSurface / detachOsdSurface (sets the android-osd-wid property).
      */
     fun setOsdSurfaceView(surfaceView: SurfaceView) {
-        osdSurfaceView = surfaceView
+        osdSurface = surfaceView
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 Log.w(TAG, "attaching osd surface")
@@ -130,7 +130,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         MPVLib.attachSurface(holder.surface)
         // Attach OSD surface early if it is already available (same-layout SurfaceView).
         // If not, the OSD SurfaceView's own callback will attach it and re-apply vo.
-        osdSurfaceView?.holder?.surface?.let { osdSurface ->
+        osdSurface?.holder?.surface?.let { osdSurface ->
             Log.w(TAG, "attaching osd surface (early)")
             MPVLib.attachOsdSurface(osdSurface)
         }
