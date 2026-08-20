@@ -1,6 +1,7 @@
 package `is`.xyz.mpv
 
 import android.content.Context
+import android.graphics.PixelFormat
 import android.util.AttributeSet
 import android.util.Log
 import android.view.SurfaceHolder
@@ -24,6 +25,12 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      */
     fun setOsdSurfaceView(surfaceView: SurfaceView) {
         osdSurface = surfaceView
+        // Make the OSD surface transparent and stack it as a media overlay ABOVE
+        // the video surface. Without a transparent, media-overlay Z-order the
+        // OSD SurfaceView defaults to an opaque black layer that covers the
+        // video (audio keeps playing, no picture) under vo=mediacodec_embed.
+        surfaceView.holder.setFormat(PixelFormat.TRANSPARENT)
+        surfaceView.setZOrderMediaOverlay(true)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 Log.w(TAG, "attaching osd surface")
