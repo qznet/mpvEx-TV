@@ -976,6 +976,13 @@ class PlayerActivity :
     mpvInitialized = true
     Log.d(TAG, "MPV initialized")
 
+    // Wire up the OSD surface for vo=mediacodec_embed (separate SurfaceView that
+    // mpv renders subtitles/OSC to, while MediaCodec renders video to the main surface)
+    binding.osdSurface?.let { osdSurface ->
+        player.setOsdSurfaceView(osdSurface)
+        Log.d(TAG, "OSD surface view wired up for mediacodec_embed")
+    }
+
     // Add observer after initialization
     MPVLib.addObserver(playerObserver)
   }

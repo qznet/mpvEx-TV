@@ -10,6 +10,41 @@ import android.view.SurfaceView
 
 abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(context, attrs), SurfaceHolder.Callback {
     /**
+     * Optional OSD surface for vo=mediacodec_embed.
+     * MediaCodec renders video directly to the main (video) surface, while mpv's
+     * gpu VO renders subtitles/OSC to this separate OSD surface. Both must be
+     * attached or mediacodec_embed fails with
+     * "No Android OSD Surface is attached for direct MediaCodec output."
+     */
+    protected var osdSurfaceView: SurfaceView? = null
+
+    /**
+     * Wire up a separate OSD SurfaceView. Its surface is attached/detached via
+     * MPVLib.attachOsdSurface / detachOsdSurface (sets the android-osd-wid property).
+     */
+    fun setOsdSurfaceView(surfaceView: SurfaceView) {
+        osdSurfaceView = surfaceView
+        surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                Log.w(TAG, "attaching osd surface")
+                MPVLib.attachOsdSurface(holder.surface)
+                // Re-apply VO so mediacodec_embed picks up the now-available OSD surface
+                // in case it was attached after the video surface / vo was set.
+                MPVLib.setPropertyString("vo", voInUse)
+            }
+
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                // OSD surface size is taken from the ANativeWindow; nothing to do.
+            }
+
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                Log.w(TAG, "detaching osd surface")
+                MPVLib.detachOsdSurface()
+            }
+        })
+    }
+
+    /**
      * Initialize libmpv.
      *
      * Call this once before the view is shown.
@@ -93,6 +128,12 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     override fun surfaceCreated(holder: SurfaceHolder) {
         Log.w(TAG, "attaching surface")
         MPVLib.attachSurface(holder.surface)
+        // Attach OSD surface early if it is already available (same-layout SurfaceView).
+        // If not, the OSD SurfaceView's own callback will attach it and re-apply vo.
+        osdSurfaceView?.holder?.surface?.let { osdSurface ->
+            Log.w(TAG, "attaching osd surface (early)")
+            MPVLib.attachOsdSurface(osdSurface)
+        }
         // This forces mpv to render subs/osd/whatever into our surface even if it would ordinarily not
         MPVLib.setOptionString("force-window", "yes")
 
@@ -113,6 +154,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // is done using the surface.
         // FIXME: There could be a race condition here, because I don't think
         // setting a property will wait for VO deinit.
+        MPVLib.detachOsdSurface()
         MPVLib.detachSurface()
     }
 

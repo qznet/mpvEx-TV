@@ -9,6 +9,17 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- OSD surface for vo=mediacodec_embed: mpv renders subtitles/OSC here
+         while MediaCodec renders video directly to the MPVView surface. -->
+    <SurfaceView
+        android:id="@+id/osd_surface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        android:clickable="false"
+        android:focusable="false"
+        android:focusableInTouchMode="false" />
+
     <androidx.compose.ui.platform.ComposeView
         android:id="@+id/controls"
         android:layout_width="match_parent"
