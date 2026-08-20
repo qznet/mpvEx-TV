@@ -26,6 +26,16 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
 
         MPVLib.init()
 
+        // Read vo from mpv.conf (user may have set mediacodec_embed)
+        // Must be done AFTER init() which reads the config file
+        val configuredVo = MPVLib.getPropertyString("vo")
+        if (!configuredVo.isNullOrBlank() && configuredVo != "auto") {
+            voInUse = configuredVo
+            Log.w(TAG, "vo from mpv.conf: $voInUse")
+        } else {
+            Log.w(TAG, "vo not set in mpv.conf, using default: $voInUse")
+        }
+
         /* set hardcoded options */
         postInitOptions()
         // could mess up VO init before surfaceCreated() is called
