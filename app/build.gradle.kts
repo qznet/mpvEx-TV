@@ -65,8 +65,14 @@ android {
     abi {
       isEnable = true
       reset()
-      include("armeabi-v7a", "arm64-v8a")
-      isUniversalApk = true
+      val arches = (project.findProperty("mpvArches") as? String)
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.toTypedArray()
+        ?: arrayOf("arm64-v8a")
+      include(*arches)
+      isUniversalApk = arches.contains("universal")
     }
   }
 
