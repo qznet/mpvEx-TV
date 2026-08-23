@@ -18,10 +18,9 @@ jobs:
     env:
       MPV_GIT_URL: https://github.com/FongMi/mpv
       MPV_GIT_REF: fongmi
-      # Pin the exact mpv kernel used by the 2026-08-20 build (a86225ad era),
-      # because FongMi force-pushed the fongmi branch afterwards and the new
-      # kernel broke Dolby Vision output. Remove this line to follow fongmi again.
-      MPV_GIT_COMMIT: e7191f2a65d64af266c5c80793e79d2f4b92b789
+      # NOTE: kernel follows the fongmi branch (latest). To pin a specific kernel,
+      # set MPV_GIT_COMMIT (ci.sh supports it) - used e.g. for e7191f2a during
+      # the 2026-08-23 verification build.
       # On push: only arm64 to save CI time.
       # On workflow_dispatch: build both armv7l + arm64.
       MPV_ANDROID_ARCHES: ${{ github.event_name == 'workflow_dispatch' && 'armv7l arm64' || 'arm64' }}
