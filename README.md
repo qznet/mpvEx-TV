@@ -104,6 +104,12 @@ GitHub Actions 页面手动触发（推荐，出全套双架构）
 等 ~28 分钟
 下载：运行记录页 → Artifacts mpvex-debug（含 arm64-v8a / armeabi-v7a / universal 三个包）
 手动触发（workflow_dispatch）还会自动在 Releases 页发一个 Release 包（vX.Y.Z-fongmi-rN）。
+确保正常的 3 个关键点
+分支必须是 fongmi-kernel —— main 是旧版，别碰。
+当前 HEAD b6727e7 已是正常基线（dw/dh 修复 + 非孤儿提交），直接触发就好。
+以后改代码后推送要注意：
+本地 git push 会失败（Windows 下 443 协议不通，之前踩过坑）。改完代码让我用 GitHub API 帮你推，或你本地用 gh api 推。
+推送时务必保证 commit 有正确父节点（用 parents 数组，不是单 parent 字段），否则会变成孤儿提交，CI checkout 后缺文件直接挂。
 
 ## Releases
 
