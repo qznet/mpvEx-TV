@@ -82,7 +82,7 @@ build_prefix() {
 	fi
 }
 
-export WGET="wget --progress=bar:force"
+export WGET="wget --progress=bar:force --tries=10 --timeout=60 --waitretry=10 --retry-connrefused --retry-on-http-error=503,504"
 : "${MPV_GIT_URL:=https://github.com/FongMi/mpv}"
 : "${MPV_ANDROID_ARCHES:=armv7l arm64}"
 
@@ -132,7 +132,13 @@ elif [ "$1" = "install" ]; then
 
 	msg "Fetching mpv"
 	mkdir -p deps/mpv
-	if [ -n "$MPV_GIT_REF" ]; then
+	if [ -n "$MPV_GIT_COMMIT" ]; then
+		# Pin exact mpv commit (reproducible builds). Full clone + explicit fetch
+		# so the commit works even if it was force-pushed away from the branch.
+		git clone "$MPV_GIT_URL" deps/mpv
+		git -C deps/mpv fetch origin "$MPV_GIT_COMMIT"
+		git -C deps/mpv checkout "$MPV_GIT_COMMIT"
+	elif [ -n "$MPV_GIT_REF" ]; then
 		git clone --depth 1 --branch "$MPV_GIT_REF" "$MPV_GIT_URL" deps/mpv
 	else
 		git clone --depth 1 "$MPV_GIT_URL" deps/mpv

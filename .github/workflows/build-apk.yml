@@ -18,7 +18,13 @@ jobs:
     env:
       MPV_GIT_URL: https://github.com/FongMi/mpv
       MPV_GIT_REF: fongmi
-      MPV_ANDROID_ARCHES: armv7l arm64
+      # Pin the exact mpv kernel used by the 2026-08-20 build (a86225ad era),
+      # because FongMi force-pushed the fongmi branch afterwards and the new
+      # kernel broke Dolby Vision output. Remove this line to follow fongmi again.
+      MPV_GIT_COMMIT: e7191f2a65d64af266c5c80793e79d2f4b92b789
+      # On push: only arm64 to save CI time.
+      # On workflow_dispatch: build both armv7l + arm64.
+      MPV_ANDROID_ARCHES: ${{ github.event_name == 'workflow_dispatch' && 'armv7l arm64' || 'arm64' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -53,7 +59,23 @@ jobs:
       - name: Build native libraries (FongMi/mpv kernel)
         run: |
           export ANDROID_HOME=$PWD/buildscripts/sdk/android-sdk-linux
-          buildscripts/include/ci.sh install
+          # Abort git fetches that stall below 1 KB/s for 30s so the retry loop can recover
+          # instead of hanging until the 120-minute job timeout.
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 30
+          git config --global https.lowSpeedLimit 1000
+          git config --global https.lowSpeedTime 30
+          MAX_TRIES=3
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "=== native install attempt $i/$MAX_TRIES ==="
+            if buildscripts/include/ci.sh install; then
+              echo "=== install ok ==="
+              break
+            fi
+            echo "[warn] install attempt $i failed; cleaning partial state and retrying in 15s..."
+            rm -rf deps/mpv prefix
+            sleep 15
+          done
           MPV_ANDROID_NATIVE_ONLY=1 buildscripts/include/ci.sh build
 
       - name: Accept Android SDK licenses
