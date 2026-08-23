@@ -114,6 +114,9 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      * Set the first file to be played once the player is ready.
      */
     fun playFile(filePath: String) {
+        // Reset aspect so the next video-params/aspect callback re-calculates
+        // the letterbox layout from scratch, avoiding stale aspect from the previous file.
+        lastEmbedAspect = null
         this.filePath = filePath
     }
 
@@ -193,6 +196,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
             ((ch * dar).toInt()) to ch
         }
         val lp = layoutParams as? ConstraintLayout.LayoutParams ?: return
+        Log.w(TAG, "applyEmbed: dar=$dar container=${cw}x${ch} cDar=$containerDar -> ${w}x${h} (cur=${lp.width}x${lp.height})")
         if (lp.width == w && lp.height == h) return
         lp.width = w
         lp.height = h

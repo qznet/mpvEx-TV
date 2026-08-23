@@ -35,38 +35,55 @@ class MPVView(
 
   var isExiting = false
 
+  // Returns display pixel width from video-params/dw (preferred) or video-params/w (fallback)
+  fun getDisplayWidth(): Int {
+    return MPVLib.getPropertyInt("video-params/dw")
+      ?: MPVLib.getPropertyInt("video-params/w")
+      ?: MPVLib.getPropertyInt("width")
+      ?: 0
+  }
+
+  // Returns display pixel height from video-params/dh (preferred) or video-params/h (fallback)
+  fun getDisplayHeight(): Int {
+    return MPVLib.getPropertyInt("video-params/dh")
+      ?: MPVLib.getPropertyInt("video-params/h")
+      ?: MPVLib.getPropertyInt("height")
+      ?: 0
+  }
+
   fun getVideoOutAspect(): Double? {
-    // Try to get aspect from video-params/aspect first
-    val rawAspect = MPVLib.getPropertyDouble("video-params/aspect")
     val rotate = MPVLib.getPropertyInt("video-params/rotate") ?: 0
 
-    // If aspect is not available or 0, calculate from width and height
-    val finalAspect = if (rawAspect == null || rawAspect < 0.001) {
-      val width = runCatching {
-        MPVLib.getPropertyInt("width") ?: MPVLib.getPropertyInt("video-params/w") ?: 0
-      }.getOrDefault(0)
-
-      val height = runCatching {
-        MPVLib.getPropertyInt("height") ?: MPVLib.getPropertyInt("video-params/h") ?: 0
-      }.getOrDefault(0)
-
-      if (width > 0 && height > 0) {
-        width.toDouble() / height.toDouble()
-      } else {
-        null
+    // Priority 1: dw/dh (mpv-computed display size, accounts for pan-scan/letterbox internally)
+    val dw = getDisplayWidth()
+    val dh = getDisplayHeight()
+    if (dw > 0 && dh > 0) {
+      val aspect = dw.toDouble() / dh.toDouble()
+      if (aspect > 0.001) {
+        val isRotated = (rotate % 180 == 90)
+        return if (isRotated) 1.0 / aspect else aspect
       }
-    } else {
-      rawAspect
     }
 
-    return finalAspect?.let { aspect ->
-      if (aspect <= 0.001) {
-        return null
-      }
+    // Priority 2: video-params/aspect
+    val rawAspect = MPVLib.getPropertyDouble("video-params/aspect")
+    if (rawAspect != null && rawAspect > 0.001) {
       val isRotated = (rotate % 180 == 90)
-      val correctedAspect = if (isRotated) 1.0 / aspect else aspect
-      correctedAspect
+      return if (isRotated) 1.0 / rawAspect else rawAspect
     }
+
+    // Priority 3: encoded w/h
+    val w = MPVLib.getPropertyInt("video-params/w") ?: MPVLib.getPropertyInt("width") ?: 0
+    val h = MPVLib.getPropertyInt("video-params/h") ?: MPVLib.getPropertyInt("height") ?: 0
+    if (w > 0 && h > 0) {
+      val aspect = w.toDouble() / h.toDouble()
+      if (aspect > 0.001) {
+        val isRotated = (rotate % 180 == 90)
+        return if (isRotated) 1.0 / aspect else aspect
+      }
+    }
+
+    return null
   }
 
   class TrackDelegate(
@@ -251,6 +268,8 @@ class MPVView(
       "video-params/aspect" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
       "video-params/w" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "video-params/h" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
+      "video-params/dw" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
+      "video-params/dh" to MPVLib.MpvFormat.MPV_FORMAT_INT64,
       "eof-reached" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
       "user-data/mpvex/show_text" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
       "user-data/mpvex/toggle_ui" to MPVLib.MpvFormat.MPV_FORMAT_STRING,

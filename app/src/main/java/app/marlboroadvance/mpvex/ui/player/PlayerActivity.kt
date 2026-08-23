@@ -1565,7 +1565,9 @@ class PlayerActivity :
   ) {
     when (property) {
       "video-params/w",
-      "video-params/h" -> {
+      "video-params/h",
+      "video-params/dw",
+      "video-params/dh" -> {
         // Safety check: don't access MPV during cleanup
         if (!mpvInitialized || player.isExiting || isFinishing) return
 
