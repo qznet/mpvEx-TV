@@ -95,6 +95,15 @@ The app generates multiple APK variants for different CPU architectures:
 - **x86_64**: Intel/AMD 64-bit devices
 
 ---
+GitHub Actions 页面手动触发（推荐，出全套双架构）
+打开 https://github.com/qznet/mpvEx-TV/actions
+左侧选 Build APK workflow
+点右上角 Run workflow
+分支下拉选 fongmi-kernel（必须，别选 main——那是旧 AAR 版不维护）
+点绿色 Run workflow
+等 ~28 分钟
+下载：运行记录页 → Artifacts mpvex-debug（含 arm64-v8a / armeabi-v7a / universal 三个包）
+手动触发（workflow_dispatch）还会自动在 Releases 页发一个 Release 包（vX.Y.Z-fongmi-rN）。
 
 ## Releases
 
