@@ -1720,6 +1720,8 @@ class PlayerActivity :
 
         val aspect = player.getVideoOutAspect()
         Log.d(TAG, "video-params/aspect changed: $aspect")
+        // Letterbox mediacodec_embed output (SurfaceView can't be letterboxed by mpv)
+        player.applyEmbedAspectRatio(aspect)
         pipHelper.updatePictureInPictureParams()
         // Update orientation when video aspect ratio changes (fixes Video orientation mode)
         // BUT: Don't update if aspect is being overridden (stretch/custom aspect mode)

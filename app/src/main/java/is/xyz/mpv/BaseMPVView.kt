@@ -6,6 +6,8 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.ViewGroup
+import androidx.constraintlayout.widget.ConstraintLayout
 
 // Contains only the essential code needed to get a picture on the screen
 
@@ -163,6 +165,44 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // setting a property will wait for VO deinit.
         MPVLib.detachOsdSurface()
         MPVLib.detachSurface()
+    }
+
+    /**
+     * For vo=mediacodec_embed the video is rendered straight to this SurfaceView's
+     * ANativeWindow by MediaCodec, so libmpv cannot letterbox it (no GL/scaling).
+     * To preserve the source DAR we shrink the view to a centered rectangle that
+     * matches the DAR and let the (black) parent show through as letterbox/
+     * pillarbox. gpu/gpu-next handle aspect internally, so this is a no-op there.
+     * Changing the view size rebuilds the Surface (brief re-decode), which is the
+     * unavoidable cost of letterboxing a direct MediaCodec surface.
+     */
+    private var lastEmbedAspect: Double? = null
+
+    fun applyEmbedAspectRatio(aspect: Double?) {
+        if (voInUse != "mediacodec_embed") return
+        if (aspect != null) lastEmbedAspect = aspect
+        val dar = lastEmbedAspect ?: return
+        val parent = parent as? ViewGroup ?: return
+        val cw = parent.width
+        val ch = parent.height
+        if (cw <= 0 || ch <= 0) return
+        val containerDar = cw.toDouble() / ch
+        val (w, h) = if (dar > containerDar) {
+            cw to (cw / dar).toInt()
+        } else {
+            ((ch * dar).toInt()) to ch
+        }
+        val lp = layoutParams as? ConstraintLayout.LayoutParams ?: return
+        if (lp.width == w && lp.height == h) return
+        lp.width = w
+        lp.height = h
+        lp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
+        lp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID
+        lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+        lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID
+        lp.horizontalBias = 0.5f
+        lp.verticalBias = 0.5f
+        layoutParams = lp
     }
 
     companion object {
