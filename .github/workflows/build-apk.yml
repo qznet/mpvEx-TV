@@ -20,12 +20,12 @@ jobs:
       # NOTE: kernel follows the fongmi branch (latest). To pin a specific kernel,
       # set MPV_GIT_COMMIT (ci.sh supports it) - used e.g. for e7191f2a during
       # the 2026-08-23 verification build.
-      # On push: only arm64 APK (matching the arm64-only native build). On
-      # workflow_dispatch: v7a + v8a + universal (matching the dual-arch native build).
-      MPV_APK_ABIS: ${{ github.event_name == 'workflow_dispatch' && 'armeabi-v7a,arm64-v8a,universal' || 'arm64-v8a' }}
-      # On push: only arm64 to save CI time.
+      # On push (auto): build v7a only — fast CI for device sideload.
+      # On workflow_dispatch (manual): build full v8a + v7a.
+      MPV_APK_ABIS: ${{ github.event_name == 'workflow_dispatch' && 'armeabi-v7a,arm64-v8a' || 'armeabi-v7a' }}
+      # On push: only armv7l to save CI time.
       # On workflow_dispatch: build both armv7l + arm64.
-      MPV_ANDROID_ARCHES: ${{ github.event_name == 'workflow_dispatch' && 'armv7l arm64' || 'arm64' }}
+      MPV_ANDROID_ARCHES: ${{ github.event_name == 'workflow_dispatch' && 'armv7l arm64' || 'armv7l' }}
 
     steps:
       - uses: actions/checkout@v7

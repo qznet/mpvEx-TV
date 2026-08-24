@@ -42,6 +42,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -76,6 +79,9 @@ fun PlayerSheet(
   val scope = rememberCoroutineScope()
   val density = LocalDensity.current
   val latestOnDismissRequest by rememberUpdatedState(onDismissRequest)
+  // TV/remote: move focus into the sheet content when it appears so DPad can
+  // navigate/select items (otherwise focus stays on the layer-1 controls behind).
+  val focusRequester = remember { FocusRequester() }
   val maxWidth = customMaxWidth ?:
   if (LocalConfiguration.current.orientation == ORIENTATION_LANDSCAPE) {
     640.dp
@@ -123,7 +129,8 @@ fun PlayerSheet(
           interactionSource = remember { MutableInteractionSource() },
           indication = null,
           onClick = internalOnDismissRequest,
-        ).fillMaxSize()
+        ).focusProperties { canFocus = false }
+        .fillMaxSize()
         .background(Color.Black.copy(alpha))
         .onSizeChanged {
           val anchors =
@@ -135,15 +142,17 @@ fun PlayerSheet(
         },
     contentAlignment = Alignment.BottomCenter,
   ) {
-    Surface(
-      modifier =
-        Modifier
-          .sizeIn(maxWidth = maxWidth, maxHeight = maxHeight)
-          .clickable(
-            interactionSource = remember { MutableInteractionSource() },
-            indication = null,
-            onClick = {},
-          ).nestedScroll(
+      Surface(
+        modifier =
+          Modifier
+            .sizeIn(maxWidth = maxWidth, maxHeight = maxHeight)
+            .focusRequester(focusRequester)
+            .focusProperties { canFocus = false }
+            .clickable(
+              interactionSource = remember { MutableInteractionSource() },
+              indication = null,
+              onClick = {},
+            ).nestedScroll(
             remember(anchoredDraggableState) {
               anchoredDraggableState.preUpPostDownNestedScrollConnection()
             },
@@ -177,6 +186,12 @@ fun PlayerSheet(
 
     LaunchedEffect(true) {
       backgroundAlpha = 0.5f
+    }
+
+    LaunchedEffect(Unit) {
+      // Request focus into the sheet so the remote's direction keys navigate
+      // its content instead of the (hidden) first-layer controls behind it.
+      focusRequester.requestFocus()
     }
 
     LaunchedEffect(anchoredDraggableState) {

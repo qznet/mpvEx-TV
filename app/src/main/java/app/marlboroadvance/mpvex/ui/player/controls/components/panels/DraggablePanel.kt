@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import app.marlboroadvance.mpvex.ui.player.controls.panelCardsColors
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -30,6 +31,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
@@ -55,6 +58,10 @@ fun DraggablePanel(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var panelWidth by remember { mutableIntStateOf(0) }
 
+    // TV/remote: move focus into the panel content when it appears so DPad can
+    // navigate/select its items (otherwise focus stays on controls behind it).
+    val focusRequester = remember { FocusRequester() }
+
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     
@@ -77,6 +84,7 @@ fun DraggablePanel(
         val colors = panelCardsColors()
         Surface(
             modifier = Modifier
+                .focusRequester(focusRequester)
                 .offset { IntOffset(offsetX.roundToInt(), 0) }
                 .onSizeChanged { panelWidth = it.width }
                 .widthIn(max = 380.dp)
@@ -86,6 +94,11 @@ fun DraggablePanel(
             contentColor = colors.contentColor,
             tonalElevation = 0.dp,
         ) {
+            LaunchedEffect(Unit) {
+                // Request focus into the panel so the remote's direction keys
+                // navigate its content instead of the (hidden) controls behind it.
+                focusRequester.requestFocus()
+            }
             Column {
                  // Drag Handle & Indicator
                  Box(
