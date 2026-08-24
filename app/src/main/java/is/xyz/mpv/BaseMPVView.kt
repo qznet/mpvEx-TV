@@ -178,23 +178,13 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     }
 
     /**
-     * For vo=mediacodec_embed, MediaCodec renders decoded frames straight to
-     * this SurfaceView's ANativeWindow and libmpv cannot letterbox or scale them
-     * (no GL pass). We resize the SurfaceView to a cover-fit rectangle that has
-     * the source DAR and covers the parent container: at least one axis runs
-     * edge-to-edge, the other may extend past the parent bounds and gets
-     * cropped by the layout. The matching buffer DAR keeps MediaCodec from
-     * adding its own letterbox inside the SurfaceView.
-     *
-     * Examples (parent 1920x1080, containerDar=1.78):
-     *   16:9 video (dar=1.78) → (1922,1080): barely overflows, full screen
-     *   4:3 video  (dar=1.33) → (1920,1444): full width, top/bottom cropped
-     *   21:9 video (dar=2.33) → (2518,1080): full height, sides cropped
-     *
-     * gpu/gpu-next handle aspect internally, so this is a no-op there.
-     * Aspect changes trigger a brief re-decode flash because MediaCodec must
-     * renegotiate its output format -- unavoidable for any scaling done outside
-     * mpv.
+     * For vo=mediacodec_embed the video is rendered straight to this SurfaceView's
+     * ANativeWindow by MediaCodec, so libmpv cannot letterbox it (no GL/scaling).
+     * To preserve the source DAR we shrink the view to a centered rectangle that
+     * matches the DAR and let the (black) parent show through as letterbox/
+     * pillarbox. gpu/gpu-next handle aspect internally, so this is a no-op there.
+     * Changing the view size rebuilds the Surface (brief re-decode), which is the
+     * unavoidable cost of letterboxing a direct MediaCodec surface.
      */
     private var lastEmbedAspect: Double? = null
 
@@ -206,14 +196,14 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         val cw = parent.width
         val ch = parent.height
         if (cw <= 0 || ch <= 0) return
-
-        // Cover-fit: output rect has ratio dar and covers the container when
-        // centered. Whichever axis is already full, the other extends beyond
-        // the parent bounds and gets clipped by the layout.
-        val w = maxOf(cw, (ch * dar).toInt())
-        val h = maxOf(ch, (cw / dar).toInt())
-
+        val containerDar = cw.toDouble() / ch
+        val (w, h) = if (dar > containerDar) {
+            cw to (cw / dar).toInt()
+        } else {
+            ((ch * dar).toInt()) to ch
+        }
         val lp = layoutParams as? ConstraintLayout.LayoutParams ?: return
+        Log.w(TAG, "applyEmbed: dar=$dar container=${cw}x${ch} cDar=$containerDar -> ${w}x${h} (cur=${lp.width}x${lp.height})")
         if (lp.width == w && lp.height == h) return
         lp.width = w
         lp.height = h
