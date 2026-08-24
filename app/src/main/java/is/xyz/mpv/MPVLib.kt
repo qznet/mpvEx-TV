@@ -125,6 +125,29 @@ object MPVLib {
         operator fun get(property: String): StateFlow<MPVNode?> = nodeFlow(property)
     }
 
+    /**
+     * Drop every cached typed property StateFlow.
+     *
+     * The six flow maps above are process-level singletons keyed by property name.
+     * Each entry is lazily registered through observeProperty on first access and is
+     * never re-registered. When the native mpv instance is destroyed (MPVLib.destroy)
+     * and later recreated (MPVLib.create + init), the old flows still hold the previous
+     * file's values (e.g. time-pos == duration at EOF, hwdec-current == "auto") and are
+     * never refreshed, because getOrPut finds the existing entry and skips observeProperty.
+     * Clearing here forces a fresh observeProperty against the new native instance on the
+     * next propXxx[...] access, so the UI no longer sticks at the last file's end state
+     * (stuck decoder/speed selection, seekbar pinned to the end) after re-entering a video.
+     */
+    @JvmStatic
+    fun clearPropertyFlows() {
+        intFlows.clear()
+        doubleFlows.clear()
+        boolFlows.clear()
+        stringFlows.clear()
+        floatFlows.clear()
+        nodeFlows.clear()
+    }
+
     // ---- Observer management ----
 
     private val observers = mutableListOf<EventObserver>()
