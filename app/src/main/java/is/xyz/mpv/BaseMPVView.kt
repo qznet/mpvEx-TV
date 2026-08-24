@@ -59,6 +59,13 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      * Call this once before the view is shown.
      */
     fun initialize(configDir: String, cacheDir: String) {
+        // The MPVLib property StateFlows are process-level singletons that are lazily
+        // observed once and never re-observed. If a previous player session ended and we
+        // are starting a new one (new native instance), those flows still hold the last
+        // file's values, so reset them here. The next propXxx[...] access re-registers
+        // observeProperty against the fresh native instance via getOrPut.
+        MPVLib.clearPropertyFlows()
+
         MPVLib.create(context.applicationContext)
 
         /* set normal options (user-supplied config can override) */
@@ -101,11 +108,6 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         holder.removeCallback(this)
 
         MPVLib.destroy()
-        // The MPVLib property StateFlows are process-level singletons that are lazily
-        // observed once and never re-observed. After the native instance is gone they
-        // still hold the previous file's values, so clear them here so the next
-        // initialize() re-observes against the fresh native instance.
-        MPVLib.clearPropertyFlows()
     }
 
     protected abstract fun initOptions()

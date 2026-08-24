@@ -137,6 +137,11 @@ object MPVLib {
      * Clearing here forces a fresh observeProperty against the new native instance on the
      * next propXxx[...] access, so the UI no longer sticks at the last file's end state
      * (stuck decoder/speed selection, seekbar pinned to the end) after re-entering a video.
+     *
+     * NOTE: MPVLib.destroy() is invoked directly from PlayerActivity.cleanupMPV() (and
+     * from BaseMPVView.destroy(), if ever used). This must therefore be called from those
+     * teardown sites AND/OR at the start of BaseMPVView.initialize() so a fresh player
+     * session always starts with empty flows.
      */
     @JvmStatic
     fun clearPropertyFlows() {

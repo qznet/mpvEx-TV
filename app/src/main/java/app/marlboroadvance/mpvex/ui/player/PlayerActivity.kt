@@ -734,6 +734,11 @@ class PlayerActivity :
 
       // Now safe to destroy MPV as internal threads have had time to shut down
       MPVLib.destroy()
+      // The MPVLib property StateFlows are process-level singletons that are lazily
+      // observed once and never re-observed. Drop them so the next player session
+      // re-registers observeProperty against the fresh native instance instead of
+      // sticking at the previous file's end state (decoder/speed locked, seekbar at end).
+      MPVLib.clearPropertyFlows()
       mpvInitialized = false
     }.onFailure { e ->
       Log.e(TAG, "Error cleaning up MPV", e)
