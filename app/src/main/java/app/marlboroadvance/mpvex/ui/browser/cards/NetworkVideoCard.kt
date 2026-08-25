@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,6 +64,8 @@ fun NetworkVideoCard(
   modifier: Modifier = Modifier,
   onLongClick: (() -> Unit)? = null,
   isSelected: Boolean = false,
+  progressPercentage: Float? = null,
+  isWatched: Boolean = false,
 ) {
   val appearancePreferences = koinInject<AppearancePreferences>()
   val browserPreferences = koinInject<BrowserPreferences>()
@@ -198,7 +201,7 @@ fun NetworkVideoCard(
         Text(
           file.name,
           style = MaterialTheme.typography.titleSmall,
-          color = MaterialTheme.colorScheme.onSurface,
+          color = if (isWatched) Color(0xFF81C784) else MaterialTheme.colorScheme.onSurface,
           maxLines = maxLines,
           overflow = TextOverflow.Ellipsis,
         )
@@ -235,6 +238,15 @@ fun NetworkVideoCard(
               color = MaterialTheme.colorScheme.onSurface,
             )
           }
+        }
+        if (progressPercentage != null) {
+          Spacer(modifier = Modifier.height(6.dp))
+          LinearProgressIndicator(
+            progress = { progressPercentage },
+            modifier = Modifier.fillMaxWidth().height(4.dp),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+          )
         }
       }
     }

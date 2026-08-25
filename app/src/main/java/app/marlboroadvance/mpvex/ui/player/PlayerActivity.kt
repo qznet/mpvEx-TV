@@ -190,6 +190,10 @@ class PlayerActivity :
    * For network streams, this includes a hash of the URI to ensure uniqueness.
    */
   private var mediaIdentifier = ""
+  // Set when we auto-advance to the next playlist item, so handleFileLoaded can
+  // make sure the freshly loaded file actually starts playing (SMB/network streams
+  // can otherwise stay paused after loadfile).
+  private var shouldResumeAfterLoad = false
 
   /**
    * Playlist of URIs for sequential playback
@@ -1825,6 +1829,12 @@ class PlayerActivity :
       // Load playback state (will skip track restoration if preferred language configured)
       val hasState = loadVideoPlaybackState(fileName)
 
+      // Auto-advance: ensure the freshly loaded next file is not left paused
+      if (shouldResumeAfterLoad) {
+        shouldResumeAfterLoad = false
+        withContext(Dispatchers.Main) { viewModel.unpause() }
+      }
+
       // Apply track selection logic (defaults only apply when no saved state).
       // Pass the directory/playlist scope so a carried-over subtitle/audio choice only
       // follows within the same folder/playlist (and not into an unrelated file).
@@ -3398,6 +3408,10 @@ class PlayerActivity :
         }
       }
     }
+
+    // Auto-advance: make sure the next file actually starts playing. Network streams
+    // (SMB/WebDAV) can otherwise be left paused after loadfile completes.
+    shouldResumeAfterLoad = true
 
     // Load the new video
     // Avoid blocking UI thread while mpv opens network streams (e.g., HLS).

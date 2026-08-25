@@ -76,6 +76,9 @@ data class NetworkBrowserScreen(
     val files by viewModel.files.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val networkFilesProgress by viewModel.networkFilesProgress.collectAsState()
+    val networkFilesWatched by viewModel.networkFilesWatched.collectAsState()
+    val lastPlayedPath by viewModel.lastPlayedPath.collectAsState()
 
     // UI State
     val isRefreshing = remember { mutableStateOf(false) }
@@ -165,6 +168,9 @@ data class NetworkBrowserScreen(
           onVideoLongClick = { video ->
             selectionManager.toggle(video)
           },
+          networkFilesProgress = networkFilesProgress,
+          networkFilesWatched = networkFilesWatched,
+          lastPlayedPath = lastPlayedPath,
           selectionManager = selectionManager,
           modifier = Modifier.padding(padding),
         )
@@ -194,6 +200,9 @@ private fun NetworkBrowserContent(
   onFolderClick: (NetworkFile) -> Unit,
   onVideoClick: (NetworkFile) -> Unit,
   onVideoLongClick: (NetworkFile) -> Unit,
+  networkFilesProgress: Map<String, Float>,
+  networkFilesWatched: Map<String, Boolean>,
+  lastPlayedPath: String?,
   selectionManager: SelectionManager<NetworkFile, String>,
   modifier: Modifier = Modifier,
 ) {
@@ -250,6 +259,18 @@ private fun NetworkBrowserContent(
       val folders = files.filter { it.isDirectory }
       val videos = files.filter { !it.isDirectory && it.mimeType?.startsWith("video/") == true }
       val networkListState = rememberLazyListState()
+
+      // Auto-scroll to the most-recently played video when entering the folder that contains it
+      LaunchedEffect(lastPlayedPath, videos) {
+        if (lastPlayedPath == null) return@LaunchedEffect
+        val idx = videos.indexOfFirst { it.path == lastPlayedPath }
+        if (idx < 0) return@LaunchedEffect
+        // LazyColumn index accounts for the "Folders" header + folder items + "Videos" header
+        val folderHeader = if (folders.isNotEmpty()) 1 else 0
+        val folderItems = folders.size
+        val videoHeader = if (videos.isNotEmpty()) 1 else 0
+        networkListState.scrollToItem(folderHeader + folderItems + videoHeader + idx)
+      }
 
       // Check if at top of list to hide scrollbar during pull-to-refresh
       val isAtTop by remember {
@@ -343,6 +364,8 @@ private fun NetworkBrowserContent(
                       onClick = { onVideoClick(video) },
                       onLongClick = { onVideoLongClick(video) },
                       isSelected = selectionManager.isSelected(video),
+                      progressPercentage = networkFilesProgress[video.path],
+                      isWatched = networkFilesWatched[video.path] ?: false,
                       modifier = Modifier,
                     )
                   }

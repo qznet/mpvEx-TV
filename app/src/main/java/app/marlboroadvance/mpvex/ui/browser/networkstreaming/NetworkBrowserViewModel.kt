@@ -12,7 +12,9 @@ import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
 import app.marlboroadvance.mpvex.repository.NetworkRepository
+import app.marlboroadvance.mpvex.domain.playbackstate.repository.PlaybackStateRepository
 import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdUtils
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,6 +33,19 @@ class NetworkBrowserViewModel(
 ) : AndroidViewModel(application),
   KoinComponent {
   private val repository: NetworkRepository by inject()
+  private val playbackStateRepository: PlaybackStateRepository by inject()
+
+  // Playback progress (0..1) keyed by NetworkFile.path, for the progress bar
+  private val _networkFilesProgress = MutableStateFlow<Map<String, Float>>(emptyMap())
+  val networkFilesProgress: StateFlow<Map<String, Float>> = _networkFilesProgress.asStateFlow()
+
+  // Watched flag keyed by NetworkFile.path (green filename)
+  private val _networkFilesWatched = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+  val networkFilesWatched: StateFlow<Map<String, Boolean>> = _networkFilesWatched.asStateFlow()
+
+  // Path of the most-recently played video in the current folder (for auto-scroll)
+  private val _lastPlayedPath = MutableStateFlow<String?>(null)
+  val lastPlayedPath: StateFlow<String?> = _lastPlayedPath.asStateFlow()
 
   private val _files = MutableStateFlow<List<NetworkFile>>(emptyList())
   val files: StateFlow<List<NetworkFile>> = _files.asStateFlow()
@@ -58,13 +73,15 @@ class NetworkBrowserViewModel(
             // Use the same natural-order comparator the player uses when building the
             // playlist from a network folder, so the browser order matches the in-player
             // playlist order (e.g. ep2 before ep10).
-            _files.value = fileList.sortedWith(
+            val sorted = fileList.sortedWith(
               compareBy<NetworkFile> { !it.isDirectory }
                 .thenComparator { a, b ->
                   app.marlboroadvance.mpvex.utils.sort.SortUtils.NaturalOrderComparator.DEFAULT
                     .compare(a.name, b.name)
                 },
             )
+            _files.value = sorted
+            loadPlaybackInfo(sorted)
           }
           .onFailure { e ->
             _error.value = e.message ?: "Unknown error"
@@ -77,7 +94,49 @@ class NetworkBrowserViewModel(
     }
   }
 
+  /**
+   * Load playback progress / watched state for the currently listed videos and
+   * resolve the most-recently played file (for auto-scroll).
+   *
+   * The lookup key matches the player's save key exactly:
+   *   buildPlaybackKey(canonicalizeNetworkPath(file.path))
+   * so the browser reflects what was actually saved during playback.
+   */
+  private fun loadPlaybackInfo(files: List<NetworkFile>) {
+    viewModelScope.launch(Dispatchers.IO) {
+      val videos = files.filter { !it.isDirectory && it.mimeType?.startsWith("video/") == true }
 
+      val progressMap = mutableMapOf<String, Float>()
+      val watchedMap = mutableMapOf<String, Boolean>()
+
+      videos.forEach { file ->
+        val key = NetworkMediaIdUtils.buildPlaybackKey(
+          NetworkMediaIdUtils.canonicalizeNetworkPath(file.path) ?: file.path,
+        )
+        val state = playbackStateRepository.getVideoDataByTitle(key) ?: return@forEach
+
+        val duration = state.lastPosition + state.timeRemaining
+        if (duration > 0) {
+          val progress = state.lastPosition.toFloat() / duration
+          if (progress in 0.01f..0.99f) progressMap[file.path] = progress
+        }
+        if (state.hasBeenWatched) watchedMap[file.path] = true
+      }
+
+      _networkFilesProgress.value = progressMap
+      _networkFilesWatched.value = watchedMap
+
+      // Auto-scroll target: most-recently played video present in this folder
+      val last = playbackStateRepository.getAllPlaybackStates().maxByOrNull { it.lastUpdatedAt }
+      _lastPlayedPath.value = last?.let { lastState ->
+        videos.firstOrNull { video ->
+          NetworkMediaIdUtils.buildPlaybackKey(
+            NetworkMediaIdUtils.canonicalizeNetworkPath(video.path) ?: video.path,
+          ) == lastState.mediaTitle
+        }?.path
+      }
+    }
+  }
 
   /**
    * Delete files from the network share
