@@ -63,6 +63,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.io.File
@@ -194,6 +195,12 @@ class PlayerActivity :
   // make sure the freshly loaded file actually starts playing (SMB/network streams
   // can otherwise stay paused after loadfile).
   private var shouldResumeAfterLoad = false
+  // Deferred resume-seek target (seconds). Set when a saved playback position is
+  // loaded; applied on the first MPV_EVENT_PLAYBACK_RESTART after the file loads
+  // because setting time-pos synchronously inside handleFileLoaded races with mpv
+  // resetting the timeline to 0, which made resume-from-position never take effect.
+  private var pendingResumeSeek: Int? = null
+  private var resumeSeekApplied = false
 
   /**
    * Playlist of URIs for sequential playback
@@ -1792,6 +1799,22 @@ class PlayerActivity :
         if (!isReady) {
           isReady = true
         }
+        // Apply a deferred resume-seek once playback has actually (re)started.
+        // pendingResumeSeek is preloaded synchronously in handleFileLoaded (before this
+        // event can fire on the main thread), so the target is always available here.
+        // We only seek until the position is reached, then mark it applied so a later
+        // user seek / natural restart never gets yanked back to the resume point.
+        if (!resumeSeekApplied) {
+          pendingResumeSeek?.let { target ->
+            val cur = MPVLib.getPropertyInt("time-pos") ?: 0
+            if (cur < target - 2) {
+              Log.d(TAG, "Resume seek: applying deferred position $target (current $cur)")
+              MPVLib.setPropertyInt("time-pos", target)
+            } else {
+              resumeSeekApplied = true
+            }
+          } ?: run { resumeSeekApplied = true }
+        }
       }
     }
   }
@@ -1802,6 +1825,10 @@ class PlayerActivity :
    * applies user preferences, and sets up metadata and media session.
    */
   private fun handleFileLoaded() {
+    // Clear any deferred resume target from the previous file before loading new state.
+    pendingResumeSeek = null
+    resumeSeekApplied = false
+
     // Extract fileName from intent only if not already set
     // This preserves fileName set in onNewIntent or onCreate
     if (fileName.isBlank()) {
@@ -1814,6 +1841,20 @@ class PlayerActivity :
     } else if (mediaIdentifier.isBlank()) {
       // If fileName was already set, but mediaIdentifier is missing, set it for safety
       mediaIdentifier = getMediaIdentifier(intent, fileName)
+    }
+
+    // Synchronously preload the resume position. event() is dispatched on the main
+    // thread (runOnUiThread), so the PLAYBACK_RESTART handler cannot run until this
+    // method returns — meaning pendingResumeSeek is always set before the first
+    // restart. The disk read happens on an IO dispatcher, only briefly blocking the
+    // main thread (one indexed row).
+    if (mediaIdentifier.isNotBlank()) {
+      pendingResumeSeek = runCatching {
+        runBlocking(Dispatchers.IO) {
+          val s = playbackStateRepository.getVideoDataByTitle(mediaIdentifier)
+          if (s != null && playerPreferences.savePositionOnQuit.get() && s.lastPosition != 0) s.lastPosition else null
+        }
+      }.getOrNull()
     }
 
     // Start media notification service (like YouTube - always show notification)
@@ -2378,6 +2419,9 @@ class PlayerActivity :
     viewModel.setVideoZoom(state.videoZoom)
 
     if (playerPreferences.savePositionOnQuit.get() && state.lastPosition != 0) {
+      // Best-effort immediate seek. The authoritative, race-free apply happens in the
+      // MPV_EVENT_PLAYBACK_RESTART handler (pendingResumeSeek is preloaded synchronously
+      // in handleFileLoaded), so even if mpv resets the timeline to 0 on start, resume works.
       MPVLib.setPropertyInt("time-pos", state.lastPosition)
     }
   }
