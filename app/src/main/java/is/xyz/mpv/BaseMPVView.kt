@@ -6,6 +6,7 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.ViewTreeObserver
 import android.view.ViewGroup
 import androidx.constraintlayout.widget.ConstraintLayout
 
@@ -106,6 +107,9 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     fun destroy() {
         // Disable surface callbacks to avoid using uninitialized mpv state
         holder.removeCallback(this)
+        if (viewTreeObserver.isAlive) {
+            viewTreeObserver.removeOnGlobalLayoutListener(embedRelayoutListener)
+        }
 
         MPVLib.destroy()
     }
@@ -163,10 +167,21 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
             MPVLib.command("loadfile", filePath as String)
             filePath = null
         }
+
+        // mediacodec_embed cannot letterbox inside mpv, so the SurfaceView is sized at the
+        // view level. The first aspect callback can arrive before the parent is laid out to
+        // its final size; listen for layout changes so the embed rectangle is recomputed
+        // against the real container dimensions (and converges once layout settles).
+        if (voInUse == "mediacodec_embed" && viewTreeObserver.isAlive) {
+            viewTreeObserver.addOnGlobalLayoutListener(embedRelayoutListener)
+        }
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         Log.w(TAG, "detaching surface")
+        if (viewTreeObserver.isAlive) {
+            viewTreeObserver.removeOnGlobalLayoutListener(embedRelayoutListener)
+        }
         MPVLib.setPropertyString("vo", "null")
         MPVLib.setPropertyString("force-window", "no")
         // Note that before calling detachSurface() we need to be sure that libmpv
@@ -187,6 +202,34 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      * unavoidable cost of letterboxing a direct MediaCodec surface.
      */
     private var lastEmbedAspect: Double? = null
+
+    /**
+     * For vo=mediacodec_embed the video is rendered into this SurfaceView's ANativeWindow
+     * by MediaCodec, so libmpv cannot letterbox it. We instead shrink the SurfaceView to a
+     * centered rectangle matching the source DAR (see [applyEmbedAspectRatio]).
+     *
+     * The problem this listener solves: [applyEmbedAspectRatio] is only invoked from the
+     * `video-params/aspect` observer. On the FIRST video that event can fire while the parent
+     * container is still mid-layout (transient / not-yet-final size), so the SurfaceView gets
+     * sized to a small rectangle and then stays stuck there — because no further aspect event
+     * ever arrives to recompute it. Switching to the next video (parent already settled) or
+     * pressing the "fit screen" button (re-triggers the same call later) both fix it, which is
+     * exactly the symptom reported.
+     *
+     * Solution: whenever the global layout settles or the parent size changes, recompute the
+     * embed rectangle against the *current* parent dimensions. The size guard inside
+     * [applyEmbedAspectRatio] makes this a no-op unless the rectangle actually needs to change,
+     * so it is cheap once things are stable. Active only in mediacodec_embed mode and only when
+     * the user has not chosen an explicit Crop/Stretch override (which we must not fight).
+     */
+    private val embedRelayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+        if (voInUse != "mediacodec_embed" || lastEmbedAspect == null) return@OnGlobalLayoutListener
+        // Respect explicit Crop (panscan=1) / Stretch / custom (override>0) choices.
+        val override = MPVLib.getPropertyDouble("video-aspect-override") ?: -1.0
+        val panscan = MPVLib.getPropertyDouble("panscan") ?: 0.0
+        if (override > 0.0 || panscan >= 1.0) return@OnGlobalLayoutListener
+        applyEmbedAspectRatio(null)
+    }
 
     fun applyEmbedAspectRatio(aspect: Double?) {
         if (voInUse != "mediacodec_embed") return
