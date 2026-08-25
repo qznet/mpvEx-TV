@@ -427,6 +427,15 @@ class MediaPlaybackService :
     }
   }
 
+  // SHUTDOWN (and other data-less events) arrive via the single-arg MPVLib.event(eventId)
+  // path; without this the service would never observe shutdown and linger.
+  override fun event(eventId: Int) {
+    if (eventId == MPVLib.MpvEvent.MPV_EVENT_SHUTDOWN) {
+      Log.d(TAG, "MPV shutdown event received, stopping service")
+      stopSelf()
+    }
+  }
+
   override fun onDestroy() {
     try {
       Log.d(TAG, "Service destroyed")
