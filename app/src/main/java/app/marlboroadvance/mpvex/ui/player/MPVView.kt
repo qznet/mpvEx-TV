@@ -300,11 +300,24 @@ class MPVView(
 
   // Setup
   private fun setupSubtitlesOptions() {
-    // Disable MPV's automatic subtitle selection
-    // App will handle track selection manually via TrackSelector to respect user choices
-    MPVLib.setOptionString("slang", "")
-    MPVLib.setOptionString("sub-auto", "no")
+    // Wire the subtitle language preference into mpv's `slang` so embedded tracks in
+    // those languages are auto-selected on file load (mpv picks the first match).
+    // Default to Simplified/Traditional Chinese so videos with embedded CJK tracks
+    // display subtitles immediately without the user opening the track menu.
+    val preferredLangs = subtitlesPreferences.preferredLanguages
+      .get()
+      .ifBlank { "chi,zh-Hans,zh-CN,chs,zh,zh-Hant" }
+    MPVLib.setOptionString("slang", preferredLangs)
+    // sub-auto controls whether mpv automatically loads external subtitle files
+    // matching the video name (e.g. movie.mkv -> movie.zh.srt). Respect the user
+    // toggle; `fuzzy` allows loose name matching, `no` disables it entirely.
+    MPVLib.setOptionString(
+      "sub-auto",
+      if (subtitlesPreferences.autoloadMatchingSubtitles.get()) "fuzzy" else "no",
+    )
     MPVLib.setOptionString("sub-file-paths", "")
+    // Keep subs-fallback=no so mpv does NOT fall back to a non-preferred subtitle
+    // (e.g. English) when no track matches the preferred language list.
     MPVLib.setOptionString("subs-fallback", "no")
 
     val fontsDirPath = "${context.filesDir.path}/fonts/"

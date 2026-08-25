@@ -14,11 +14,11 @@ android {
   compileSdk = 36
 
   defaultConfig {
-    applicationId = "app.marlboroadvance.mpvex"
+    applicationId = "app.marlboroadvance.mpvex.tv"
     minSdk = 26
     targetSdk = 36
-    versionCode = 135
-    versionName = "1.3.5"
+    versionCode = 136
+    versionName = "1.3.5-tv"
 
     vectorDrawables {
       useSupportLibrary = true
