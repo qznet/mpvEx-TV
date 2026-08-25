@@ -174,6 +174,7 @@ fun FileSystemBrowserScreen(path: String? = null) {
   val currentPath by viewModel.currentPath.collectAsState()
   val items by viewModel.items.collectAsState()
   val videoFilesWithPlayback by viewModel.videoFilesWithPlayback.collectAsState()
+  val videoFilesWatched by viewModel.videoFilesWatched.collectAsState()
   val isLoading by viewModel.isLoading.collectAsState()
   val error by viewModel.error.collectAsState()
   val isAtRoot by viewModel.isAtRoot.collectAsState()
@@ -204,6 +205,22 @@ fun FileSystemBrowserScreen(path: String? = null) {
   var isSearchLoading by remember { mutableStateOf(false) }
   val keyboardController = LocalSoftwareKeyboardController.current
   val focusRequester = remember { FocusRequester() }
+
+  // Auto-scroll to the most-recently played video when entering a directory that contains it.
+  // This satisfies "每次打开 mpvEx-TV 直接定位到上次最后播放的文件位置".
+  var autoScrolledPaths by remember { mutableStateOf(emptySet<String>()) }
+  LaunchedEffect(items, currentPath) {
+    if (currentPath in autoScrolledPaths) return@LaunchedEffect
+    if (items.isEmpty()) return@LaunchedEffect
+    val lastName = viewModel.getLastPlayedVideoName() ?: return@LaunchedEffect
+    val index = items.indexOfFirst {
+      it is FileSystemItem.VideoFile && it.video.displayName == lastName
+    }
+    if (index >= 0) {
+      listState.scrollToItem(index)
+      autoScrolledPaths = autoScrolledPaths + currentPath
+    }
+  }
   
   // Get navigation bar height from MainScreen
   val navigationBarHeight = app.marlboroadvance.mpvex.ui.browser.LocalNavigationBarHeight.current
@@ -791,6 +808,7 @@ fun FileSystemBrowserScreen(path: String? = null) {
                 searchResults = searchResults,
                 isLoading = isSearchLoading,
                 videoFilesWithPlayback = videoFilesWithPlayback,
+                videoFilesWatched = videoFilesWatched,
                 showSubtitleIndicator = showSubtitleIndicator,
                 isAtRoot = isAtRoot,
                 navigationBarHeight = navigationBarHeight,
@@ -810,6 +828,7 @@ fun FileSystemBrowserScreen(path: String? = null) {
                 listState = listState,
                 items = items,
                 videoFilesWithPlayback = videoFilesWithPlayback,
+                videoFilesWatched = videoFilesWatched,
                 isLoading = isLoading && items.isEmpty(),
                 isRefreshing = isRefreshing,
                 error = error,
@@ -1154,6 +1173,7 @@ private fun FileSystemBrowserContent(
   listState: LazyListState,
   items: List<FileSystemItem>,
   videoFilesWithPlayback: Map<Long, Float>,
+  videoFilesWatched: Map<Long, Boolean>,
   isLoading: Boolean,
   isRefreshing: androidx.compose.runtime.MutableState<Boolean>,
   error: String?,
@@ -1336,6 +1356,7 @@ private fun FileSystemBrowserContent(
               VideoCard(
                 video = videoFile.video,
                 progressPercentage = videoFilesWithPlayback[videoFile.video.id],
+                isWatched = videoFilesWatched[videoFile.video.id] ?: false,
                 isRecentlyPlayed = false,
                 isSelected = videoSelectionManager.isSelected(videoFile.video),
                 onClick = { onVideoClick(videoFile.video) },
@@ -1383,6 +1404,7 @@ private fun FileSystemSearchContent(
   searchResults: List<FileSystemItem>,
   isLoading: Boolean,
   videoFilesWithPlayback: Map<Long, Float>,
+  videoFilesWatched: Map<Long, Boolean>,
   showSubtitleIndicator: Boolean,
   isAtRoot: Boolean,
   navigationBarHeight: Dp,
@@ -1514,6 +1536,7 @@ private fun FileSystemSearchContent(
               VideoCard(
                 video = videoFile.video,
                 progressPercentage = videoFilesWithPlayback[videoFile.video.id],
+                isWatched = videoFilesWatched[videoFile.video.id] ?: false,
                 isRecentlyPlayed = false,
                 isSelected = false,
                 onClick = { onVideoClick(videoFile.video) },

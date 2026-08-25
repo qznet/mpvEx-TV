@@ -2251,6 +2251,7 @@ class PlayerActivity :
 
               isCurrentlyWatched || isFinished || wasWatchedThisSession || (oldState?.hasBeenWatched == true)
             },
+            lastUpdatedAt = System.currentTimeMillis(),
           ),
         )
 

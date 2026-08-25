@@ -68,6 +68,10 @@ class FileSystemBrowserViewModel(
   private val _videoFilesWithPlayback = MutableStateFlow<Map<Long, Float>>(emptyMap())
   val videoFilesWithPlayback: StateFlow<Map<Long, Float>> = _videoFilesWithPlayback.asStateFlow()
 
+  // Videos that have been watched/completed (drives the distinct filename color)
+  private val _videoFilesWatched = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
+  val videoFilesWatched: StateFlow<Map<Long, Boolean>> = _videoFilesWatched.asStateFlow()
+
   // Loading state - similar to Fossify's showProgressBar/hideProgressBar
   private val _isLoading = MutableStateFlow(false)
   val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -429,6 +433,7 @@ class FileSystemBrowserViewModel(
     viewModelScope.launch(Dispatchers.IO) {
       val videoFiles = items.filterIsInstance<FileSystemItem.VideoFile>()
       val playbackMap = mutableMapOf<Long, Float>()
+      val watchedMap = mutableMapOf<Long, Boolean>()
 
       Log.d(TAG, "Loading playback info for ${videoFiles.size} videos")
 
@@ -436,22 +441,40 @@ class FileSystemBrowserViewModel(
         val video = videoFile.video
         val playbackState = playbackStateRepository.getVideoDataByTitle(video.displayName)
 
-        if (playbackState != null && video.duration > 0) {
-          val durationSeconds = video.duration / 1000
-          val timeRemaining = playbackState.timeRemaining.toLong()
-          val watched = durationSeconds - timeRemaining
-          val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
+        if (playbackState != null) {
+          // Mark watched/completed videos so the filename can be shown in a distinct color
+          if (playbackState.hasBeenWatched) {
+            watchedMap[video.id] = true
+          }
 
-          // Only show progress for videos that are 1-99% complete
-          // Similar to how media players show partial progress
-          if (progressValue in 0.01f..0.99f) {
-            playbackMap[video.id] = progressValue
+          if (video.duration > 0) {
+            val durationSeconds = video.duration / 1000
+            val timeRemaining = playbackState.timeRemaining.toLong()
+            val watched = durationSeconds - timeRemaining
+            val progressValue = (watched.toFloat() / durationSeconds.toFloat()).coerceIn(0f, 1f)
+
+            // Only show progress for videos that are 1-99% complete
+            // Similar to how media players show partial progress
+            if (progressValue in 0.01f..0.99f) {
+              playbackMap[video.id] = progressValue
+            }
           }
         }
       }
 
       _videoFilesWithPlayback.value = playbackMap
-      Log.d(TAG, "Loaded playback info for ${playbackMap.size} videos with progress")
+      _videoFilesWatched.value = watchedMap
+      Log.d(TAG, "Loaded playback info for ${playbackMap.size} videos with progress, ${watchedMap.size} watched")
     }
   }
+
+  /**
+   * Returns the display name of the most-recently played video (based on [PlaybackStateEntity.lastUpdatedAt]),
+   * or null if no playback history exists. Used to auto-scroll the browser to the last-played file on open.
+   */
+  suspend fun getLastPlayedVideoName(): String? =
+    playbackStateRepository.getAllPlaybackStates()
+      .maxByOrNull { it.lastUpdatedAt }
+      ?.mediaTitle
+      ?.takeIf { it.isNotBlank() }
 }

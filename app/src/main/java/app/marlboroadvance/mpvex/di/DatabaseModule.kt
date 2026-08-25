@@ -527,6 +527,22 @@ val MIGRATION_10_11 = object : Migration(10, 11) {
   }
 }
 
+/**
+ * Adds the [PlaybackStateEntity.lastUpdatedAt] column (epoch millis) used to locate the
+ * most-recently played file for auto-scroll / auto-resume.
+ */
+val MIGRATION_11_12 = object : Migration(11, 12) {
+  override fun migrate(db: SupportSQLiteDatabase) {
+    try {
+      db.execSQL("ALTER TABLE PlaybackStateEntity ADD COLUMN lastUpdatedAt INTEGER NOT NULL DEFAULT 0")
+      android.util.Log.d("Migration_11_12", "Migration completed successfully")
+    } catch (e: Exception) {
+      android.util.Log.e("Migration_11_12", "Migration failed", e)
+      throw e
+    }
+  }
+}
+
 
 val DatabaseModule =
   module {
@@ -542,7 +558,7 @@ val DatabaseModule =
       Room
         .databaseBuilder(context, MpvExDatabase::class.java, "mpvex.db")
         .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
         // Only wipe on downgrade (rare); never silently destroy data when an *upgrade*
         // migration is missing/failing — fail loudly so the bug is caught instead.
         .fallbackToDestructiveMigrationOnDowngrade(true)

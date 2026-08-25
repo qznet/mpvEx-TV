@@ -18,4 +18,5 @@ data class PlaybackStateEntity(
   val timeRemaining: Int = 0, // in seconds (duration - lastPosition)
   val externalSubtitles: String = "", // Comma-separated list of external subtitle URIs
   val hasBeenWatched: Boolean = false, // Persistent flag: true if video has ever reached the watched threshold
+  val lastUpdatedAt: Long = 0, // epoch millis - used to find the most-recently played file for auto-resume / auto-scroll
 )

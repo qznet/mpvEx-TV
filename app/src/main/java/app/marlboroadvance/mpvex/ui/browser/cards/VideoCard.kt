@@ -273,7 +273,7 @@ fun VideoCard(
           color = if (isRecentlyPlayed) {
             MaterialTheme.colorScheme.tertiary 
           } else if (isWatched) {
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            Color(0xFF81C784) // distinct green for completed/watched videos
           } else {
             MaterialTheme.colorScheme.onSurface
           },
@@ -560,7 +560,7 @@ fun VideoCard(
             color = if (isRecentlyPlayed) {
               MaterialTheme.colorScheme.tertiary 
             } else if (isWatched) {
-              MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+              Color(0xFF81C784) // distinct green for completed/watched videos
             } else {
               MaterialTheme.colorScheme.onSurface
             },
