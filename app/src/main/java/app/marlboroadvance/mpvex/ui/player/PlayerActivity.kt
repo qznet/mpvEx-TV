@@ -2185,10 +2185,15 @@ class PlayerActivity :
     val scaleByWindow = subtitlesPreferences.scaleByWindow.get()
     val scaleValue = if (scaleByWindow) "yes" else "no"
     MPVLib.setPropertyString("sub-scale-by-window", scaleValue)
-    MPVLib.setPropertyString("sub-use-margins", scaleValue)
+    // mediacodec_embed renders the video into a Surface sized to the video rectangle
+    // only; sub-use-margins=yes pushes subtitles into the (unrendered) letterbox area,
+    // making them invisible — esp. at sub-margin-y=0. Keep it "no" so subtitles stay
+    // within the video frame and remain visible.
+    MPVLib.setPropertyString("sub-use-margins", "no")
 
     MPVLib.setPropertyFloat("sub-scale", subtitlesPreferences.subScale.get())
     MPVLib.setPropertyInt("sub-pos", subtitlesPreferences.subPos.get())
+    MPVLib.setPropertyInt("sub-margin-y", subtitlesPreferences.subMarginY.get())
 
     Log.d(TAG, "Applied subtitle preferences")
   }

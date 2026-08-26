@@ -77,6 +77,10 @@ import com.yubyf.truetypeparser.TTFFile
 import `is`.xyz.mpv.MPVLib
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.onFocusChanged
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
@@ -163,6 +167,7 @@ private fun ShowAddSubtitleHeader(
     Row(
       Modifier
         .fillMaxWidth()
+        .autoBringIntoView()
         .clickable(onClick = onToggleVisible)
         .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.smaller),
       verticalAlignment = Alignment.CenterVertically,
@@ -183,6 +188,7 @@ private fun ShowAddSubtitleHeader(
     Row(
       Modifier
         .fillMaxWidth()
+        .autoBringIntoView()
         .clickable(onClick = onAdd)
         .height(56.dp)
         .padding(horizontal = MaterialTheme.spacing.medium),
@@ -283,10 +289,12 @@ private fun SubtitleTrackRow(
   onRemove: (() -> Unit)?,
 ) {
   Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clickable(onClick = onToggle)
-      .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
+    modifier = Mod    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .autoBringIntoView()
+        .clickable(onClick = onToggle)
+        .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
   ) {
@@ -363,6 +371,7 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
     Row(
       Modifier
         .fillMaxWidth()
+        .autoBringIntoView()
         .clickable {
           overrideAssSubs = !overrideAssSubs
           preferences.overrideAssSubs.set(overrideAssSubs)
@@ -386,6 +395,7 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
     Row(
       Modifier
         .fillMaxWidth()
+        .autoBringIntoView()
         .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
@@ -429,17 +439,21 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
     LabeledSliderRow(
       icon = { Icon(Icons.Default.Height, null, modifier = Modifier.size(28.dp)) },
       label = stringResource(R.string.player_sheets_sub_bottom_padding),
-      value = subMarginY ?: 0,
+      value = subMarginY ?: preferences.subMarginY.get(),
       min = 0,
       max = 200,
-      valueText = (subMarginY ?: 0).toString(),
-      onChange = { MPVLib.setPropertyInt("sub-margin-y", it) },
+      valueText = (subMarginY ?: preferences.subMarginY.get()).toString(),
+      onChange = {
+        preferences.subMarginY.set(it)
+        MPVLib.setPropertyInt("sub-margin-y", it)
+      },
     )
 
     // 字体轮廓 segmented
     Row(
       Modifier
         .fillMaxWidth()
+        .autoBringIntoView()
         .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
@@ -490,12 +504,28 @@ private fun SegmentedChip(
     else MaterialTheme.colorScheme.onSurfaceVariant
   Box(
     modifier = Modifier
+      .autoBringIntoView()
       .clickable(onClick = onClick)
       .background(bg, shape = RoundedCornerShape(20.dp))
       .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
   ) {
     Text(label, style = MaterialTheme.typography.labelLarge, color = fg)
   }
+}
+
+/**
+ * TV/remote helper: whenever this element (or a descendant) gains focus, scroll its
+ * nearest scrollable ancestor so the focused control is brought into view. Compose's
+ * plain `verticalScroll` does not auto-scroll on DPad focus moves, which is why the
+ * menu could not be scrolled to the bottom with the remote.
+ */
+@Composable
+private fun Modifier.autoBringIntoView(): Modifier {
+  val scope = rememberCoroutineScope()
+  val requester = remember { BringIntoViewRequester() }
+  return this
+    .bringIntoViewRequester(requester)
+    .onFocusChanged { if (it.hasFocus) scope.launch { requester.bringIntoView() } }
 }
 
 @Composable
@@ -511,13 +541,16 @@ private fun LabeledSliderRow(
   val haptic = LocalHapticFeedback.current
   Row(
     Modifier
-      .fillMaxWidth()
-      .padding(horizontal = MaterialTheme.spacing.medium),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
-  ) {
-    icon()
-    Column(Modifier.weight(0.5f)) {
+         Row(
+      Modifier
+        .fillMaxWidth()
+        .autoBringIntoView()
+        .padding(horizontal = MaterialTheme.spacing.medium),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
+    ) {
+      icon()
+      Column(Modifier.weight(0.5f)) {
       Text(label, style = MaterialTheme.typography.bodyMedium)
       Text(valueText)
     }
@@ -569,7 +602,7 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
     Row(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
-      modifier = Modifier.fillMaxWidth(),
+      modifier = Modifier.fillMaxWidth().autoBringIntoView(),
     ) {
       Text(
         text = stringResource(R.string.player_sheets_subtitles_color_text),
@@ -580,7 +613,7 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
     }
     Row(
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
-      modifier = Modifier.fillMaxWidth(),
+      modifier = Modifier.fillMaxWidth().autoBringIntoView(),
     ) {
       val presets = listOf(
         0xFFFFFFFF.toInt(), // 白
@@ -596,38 +629,46 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
         )
       }
     }
-    TintedSliderItem(
-      label = "R",
-      value = currentColor.red,
-      valueText = currentColor.red.toString(),
-      onChange = { v -> applyColor(currentColor.copyAsArgb(red = v)) },
-      max = 255,
-      tint = Color.Red,
-    )
-    TintedSliderItem(
-      label = "G",
-      value = currentColor.green,
-      valueText = currentColor.green.toString(),
-      onChange = { v -> applyColor(currentColor.copyAsArgb(green = v)) },
-      max = 255,
-      tint = Color.Green,
-    )
-    TintedSliderItem(
-      label = "B",
-      value = currentColor.blue,
-      valueText = currentColor.blue.toString(),
-      onChange = { v -> applyColor(currentColor.copyAsArgb(blue = v)) },
-      max = 255,
-      tint = Color.Blue,
-    )
-    TintedSliderItem(
-      label = "A",
-      value = currentColor.alpha,
-      valueText = currentColor.alpha.toString(),
-      onChange = { v -> applyColor(currentColor.copyAsArgb(alpha = v)) },
-      max = 255,
-      tint = Color.White,
-    )
+    Box(Modifier.autoBringIntoView()) {
+      TintedSliderItem(
+        label = "R",
+        value = currentColor.red,
+        valueText = currentColor.red.toString(),
+        onChange = { v -> applyColor(currentColor.copyAsArgb(red = v)) },
+        max = 255,
+        tint = Color.Red,
+      )
+    }
+    Box(Modifier.autoBringIntoView()) {
+      TintedSliderItem(
+        label = "G",
+        value = currentColor.green,
+        valueText = currentColor.green.toString(),
+        onChange = { v -> applyColor(currentColor.copyAsArgb(green = v)) },
+        max = 255,
+        tint = Color.Green,
+      )
+    }
+    Box(Modifier.autoBringIntoView()) {
+      TintedSliderItem(
+        label = "B",
+        value = currentColor.blue,
+        valueText = currentColor.blue.toString(),
+        onChange = { v -> applyColor(currentColor.copyAsArgb(blue = v)) },
+        max = 255,
+        tint = Color.Blue,
+      )
+    }
+    Box(Modifier.autoBringIntoView()) {
+      TintedSliderItem(
+        label = "A",
+        value = currentColor.alpha,
+        valueText = currentColor.alpha.toString(),
+        onChange = { v -> applyColor(currentColor.copyAsArgb(alpha = v)) },
+        max = 255,
+        tint = Color.White,
+      )
+    }
   }
 }
 
@@ -653,6 +694,7 @@ private fun ColorPresetChip(color: Int, selected: Boolean, onClick: () -> Unit) 
   Box(
     Modifier
       .size(36.dp)
+      .autoBringIntoView()
       .background(Color(r, g, b), shape = CircleShape)
       .border(
         width = if (selected) 3.dp else 1.dp,
