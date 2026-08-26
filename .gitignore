@@ -40,3 +40,6 @@ kotlin-daemon-*.log
 *.ap_
 *.dex
 /app/build/
+
+# Local pre-edit backups (must stay outside git tracking)
+backups/
