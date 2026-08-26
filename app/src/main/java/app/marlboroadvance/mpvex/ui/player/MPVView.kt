@@ -121,10 +121,8 @@ class MPVView(
     // If user did not set vo in mpv.conf, set default after init
     // setVo(if (useGpuNext) "gpu-next" else "gpu")
     
-    // Set GPU API context (Vulkan or OpenGL) if using gpu/gpu-next.
-    // vo=mediacodec_embed ignores these settings (the milestone build that renders
-    // subtitles correctly on embed does NOT force a gpu-api here), so we only set it
-    // for the vulkan / gpu-next paths and let mpv pick the default otherwise.
+    // Set GPU API context (Vulkan or OpenGL) if using gpu/gpu-next
+    // (mediacodec_embed ignores these settings)
     if (useVulkan) {
       MPVLib.setOptionString("gpu-api", "vulkan")
       MPVLib.setOptionString("gpu-context", "androidvk")
@@ -302,12 +300,21 @@ class MPVView(
 
   // Setup
   private fun setupSubtitlesOptions() {
-    // Disable MPV's automatic subtitle selection.
-    // App handles track selection manually via TrackSelector to respect user choices
-    // and to keep subtitle rendering reliable on vo=mediacodec_embed. This matches
-    // the milestone build (80b12a8) that displays subtitles correctly.
-    MPVLib.setOptionString("slang", "")
-    MPVLib.setOptionString("sub-auto", "no")
+    // Wire the subtitle language preference into mpv's `slang` so embedded tracks in
+    // those languages are auto-selected on file load (mpv picks the first match).
+    // Default to Simplified/Traditional Chinese so videos with embedded CJK tracks
+    // display subtitles immediately without the user opening the track menu.
+    val preferredLangs = subtitlesPreferences.preferredLanguages
+      .get()
+      .ifBlank { "chi,zh-Hans,zh-CN,chs,zh,zh-Hant" }
+    MPVLib.setOptionString("slang", preferredLangs)
+    // sub-auto controls whether mpv automatically loads external subtitle files
+    // matching the video name (e.g. movie.mkv -> movie.zh.srt). Respect the user
+    // toggle; `fuzzy` allows loose name matching, `no` disables it entirely.
+    MPVLib.setOptionString(
+      "sub-auto",
+      if (subtitlesPreferences.autoloadMatchingSubtitles.get()) "fuzzy" else "no",
+    )
     MPVLib.setOptionString("sub-file-paths", "")
     // Keep subs-fallback=no so mpv does NOT fall back to a non-preferred subtitle
     // (e.g. English) when no track matches the preferred language list.
@@ -383,11 +390,9 @@ class MPVView(
 
     val scaleByWindow = if (subtitlesPreferences.scaleByWindow.get()) "yes" else "no"
     MPVLib.setOptionString("sub-scale-by-window", scaleByWindow)
-    // sub-use-margins follows scaleByWindow (default "yes"), matching the milestone
-    // build (80b12a8) where subtitles render correctly on vo=mediacodec_embed.
     MPVLib.setOptionString("sub-use-margins", scaleByWindow)
-    MPVLib.setOptionString("secondary-sub-use-margins", scaleByWindow)
     MPVLib.setOptionString("secondary-sub-scale-by-window", scaleByWindow)
+    MPVLib.setOptionString("secondary-sub-use-margins", scaleByWindow)
   }
 
 
