@@ -16,12 +16,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ClosedCaption
@@ -49,7 +48,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,7 +80,6 @@ import `is`.xyz.mpv.MPVLib
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 
@@ -94,22 +91,9 @@ import org.koin.compose.koinInject
  *
  * 字幕延迟仍由长按 SUBTITLES 触发（即 [SubtitleDelayPanel]），菜单头部"更多时间"按钮提供等效入口。
  *
- * TV 适配：本表内容较长，遥控器 DPad 聚焦时 `Column(verticalScroll)` 默认不会把聚焦项滚入视口，
- * 因此在每个可聚焦项上挂 `focusBringIntoView()`（封装 BringIntoViewRequester），保证方向键能一路滚到底部。
+ * TV 适配：内容较长，使用 `LazyColumn`（`rememberLazyListState`）承载，原生支持遥控器 DPad
+ * 聚焦项自动滚入视口，方向键可一路滚到底部（与原始 SubtitlesSheet/GenericTracksSheet 一致）。
  */
-
-/**
- * TV 适配辅助：返回一个 Modifier，使该可聚焦项在被 DPad 聚焦时自动滚入 [Column] 视口。
- * 用 [BringIntoViewRequester] 实现（本工程 Compose BOM 未提供 bringIntoViewOnFocus()）。
- */
-@Composable
-private fun focusBringIntoView(): Modifier {
-  val requester = remember { BringIntoViewRequester() }
-  val scope = rememberCoroutineScope()
-  return Modifier
-    .bringIntoViewRequester(requester)
-    .onFocusChanged { if (it.isFocused) scope.launch { requester.bringIntoView() } }
-}
 
 @SuppressLint("MutableCollectionMutableState", "UnrememberedMutableState")
 @Composable
@@ -132,43 +116,48 @@ fun EnhancedSubtitlesSheet(
   }
 
   PlayerSheet(onDismissRequest, modifier = modifier) {
-    val scroll = rememberScrollState()
-    Column(
-      Modifier
-        .fillMaxWidth()
-        .verticalScroll(scroll)
-        .padding(vertical = MaterialTheme.spacing.small),
+    val listState = rememberLazyListState()
+    LazyColumn(
+      state = listState,
+      modifier = Modifier.fillMaxWidth(),
+      contentPadding = PaddingValues(vertical = MaterialTheme.spacing.small),
       verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
     ) {
-      // 0. 显示字幕 + 添加按钮 + 在线搜索/字幕延迟
-      ShowAddSubtitleHeader(
-        subtitlesVisible = subtitlesVisible,
-        onToggleVisible = {
-          if (subtitlesVisible) {
-            MPVLib.setPropertyString("sid", "no")
-          } else {
-            // 打开：优先复用当前 sid；若 sid<=0 则挑第一条可见字幕
-            val pick = tracks.firstOrNull { isSubtitleSelected(it.id) } ?: tracks.firstOrNull()
-            if (pick != null) {
-              MPVLib.setPropertyInt("sid", pick.id)
+      item {
+        // 0. 显示字幕 + 添加按钮 + 在线搜索/字幕延迟
+        ShowAddSubtitleHeader(
+          subtitlesVisible = subtitlesVisible,
+          onToggleVisible = {
+            if (subtitlesVisible) {
+              MPVLib.setPropertyString("sid", "no")
+            } else {
+              // 打开：优先复用当前 sid；若 sid<=0 则挑第一条可见字幕
+              val pick = tracks.firstOrNull { isSubtitleSelected(it.id) } ?: tracks.firstOrNull()
+              if (pick != null) {
+                MPVLib.setPropertyInt("sid", pick.id)
+              }
             }
-          }
-        },
-        onAdd = onAddSubtitle,
-        onOnlineSearch = onOpenOnlineSearch,
-        onDelay = onOpenSubtitleDelay,
-      )
+          },
+          onAdd = onAddSubtitle,
+          onOnlineSearch = onOpenOnlineSearch,
+          onDelay = onOpenSubtitleDelay,
+        )
+      }
 
-      // 1. 字幕轨道
-      SubtitleTracksSection(
-        tracks = tracks,
-        isSelected = isSubtitleSelected,
-        onToggle = onToggleSubtitle,
-        onRemove = onRemoveSubtitle,
-      )
+      item {
+        // 1. 字幕轨道
+        SubtitleTracksSection(
+          tracks = tracks,
+          isSelected = isSubtitleSelected,
+          onToggle = onToggleSubtitle,
+          onRemove = onRemoveSubtitle,
+        )
+      }
 
-      // 2. 字幕样式（字体/字号/底部间距/字体轮廓/文字颜色/强制覆盖 ASS）
-      SubtitleStyleSection(preferences = preferences)
+      item {
+        // 2. 字幕样式（字体/字号/底部间距/字体轮廓/文字颜色/强制覆盖 ASS）
+        SubtitleStyleSection(preferences = preferences)
+      }
     }
   }
 }
@@ -185,8 +174,7 @@ private fun ShowAddSubtitleHeader(
     Row(
       Modifier
         .fillMaxWidth()
-        .then(focusBringIntoView())
-        .clickable(onClick = onToggleVisible)
+                .clickable(onClick = onToggleVisible)
         .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.smaller),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
@@ -206,8 +194,7 @@ private fun ShowAddSubtitleHeader(
     Row(
       Modifier
         .fillMaxWidth()
-        .then(focusBringIntoView())
-        .clickable(onClick = onAdd)
+                .clickable(onClick = onAdd)
         .height(56.dp)
         .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
@@ -309,8 +296,7 @@ private fun SubtitleTrackRow(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .then(focusBringIntoView())
-      .clickable(onClick = onToggle)
+            .clickable(onClick = onToggle)
       .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
@@ -391,8 +377,7 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
     Row(
       Modifier
         .fillMaxWidth()
-        .then(focusBringIntoView())
-        .clickable {
+                .clickable {
           overrideAssSubs = !overrideAssSubs
           preferences.overrideAssSubs.set(overrideAssSubs)
           MPVLib.setPropertyString("sub-ass-override", if (overrideAssSubs) "force" else "scale")
@@ -415,8 +400,7 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
     Row(
       Modifier
         .fillMaxWidth()
-        .then(focusBringIntoView())
-        .padding(horizontal = MaterialTheme.spacing.medium),
+                .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
     ) {
@@ -473,8 +457,7 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
     Row(
       Modifier
         .fillMaxWidth()
-        .then(focusBringIntoView())
-        .padding(horizontal = MaterialTheme.spacing.medium),
+                .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
     ) {
@@ -524,8 +507,7 @@ private fun SegmentedChip(
     else MaterialTheme.colorScheme.onSurfaceVariant
   Box(
     modifier = Modifier
-      .then(focusBringIntoView())
-      .clickable(onClick = onClick)
+            .clickable(onClick = onClick)
       .background(bg, shape = RoundedCornerShape(20.dp))
       .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
   ) {
@@ -547,8 +529,7 @@ private fun LabeledSliderRow(
   Row(
     Modifier
       .fillMaxWidth()
-      .then(focusBringIntoView())
-      .padding(horizontal = MaterialTheme.spacing.medium),
+            .padding(horizontal = MaterialTheme.spacing.medium),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
   ) {
@@ -566,7 +547,7 @@ private fun LabeledSliderRow(
           haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
       },
-      modifier = Modifier.weight(1.5f).then(focusBringIntoView()),
+      modifier = Modifier.weight(1.5f),
       valueRange = min.toFloat()..max.toFloat(),
       steps = (max - min).coerceAtLeast(0),
     )
@@ -601,7 +582,7 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
   Column(
     Modifier
       .padding(horizontal = MaterialTheme.spacing.medium)
-      .then(focusBringIntoView()),
+      ,
     verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.extraSmall),
   ) {
     Row(
@@ -641,7 +622,7 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
       onChange = { v -> applyColor(currentColor.copyAsArgb(red = v)) },
       max = 255,
       tint = Color.Red,
-      modifier = Modifier.then(focusBringIntoView()),
+      modifier = Modifier,
     )
     TintedSliderItem(
       label = "G",
@@ -650,7 +631,7 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
       onChange = { v -> applyColor(currentColor.copyAsArgb(green = v)) },
       max = 255,
       tint = Color.Green,
-      modifier = Modifier.then(focusBringIntoView()),
+      modifier = Modifier,
     )
     TintedSliderItem(
       label = "B",
@@ -659,7 +640,7 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
       onChange = { v -> applyColor(currentColor.copyAsArgb(blue = v)) },
       max = 255,
       tint = Color.Blue,
-      modifier = Modifier.then(focusBringIntoView()),
+      modifier = Modifier,
     )
     TintedSliderItem(
       label = "A",
@@ -668,7 +649,7 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
       onChange = { v -> applyColor(currentColor.copyAsArgb(alpha = v)) },
       max = 255,
       tint = Color.White,
-      modifier = Modifier.then(focusBringIntoView()),
+      modifier = Modifier,
     )
   }
 }
@@ -694,8 +675,7 @@ private fun ColorPresetChip(color: Int, selected: Boolean, onClick: () -> Unit) 
   val b = color and 0xFF
   Box(
     Modifier
-      .then(focusBringIntoView())
-      .size(36.dp)
+            .size(36.dp)
       .background(Color(r, g, b), shape = CircleShape)
       .border(
         width = if (selected) 3.dp else 1.dp,
