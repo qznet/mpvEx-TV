@@ -82,6 +82,7 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.focus.onFocusChanged
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 
@@ -289,12 +290,11 @@ private fun SubtitleTrackRow(
   onRemove: (() -> Unit)?,
 ) {
   Row(
-    modifier = Mod    Row(
-      modifier = Modifier
-        .fillMaxWidth()
-        .autoBringIntoView()
-        .clickable(onClick = onToggle)
-        .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
+    modifier = Modifier
+      .fillMaxWidth()
+      .autoBringIntoView()
+      .clickable(onClick = onToggle)
+      .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
   ) {
@@ -318,7 +318,7 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
   val fonts = remember { mutableListOf("Default") }
   val font by MPVLib.propString["sub-font"].collectAsState()
   val fontSize by MPVLib.propInt["sub-font-size"].collectAsState()
-  val subMarginY by MPVLib.propInt["sub-margin-y"].collectAsState()
+  val subPos by MPVLib.propInt["sub-pos"].collectAsState()
   val mpvBorderStyle by MPVLib.propString["sub-border-style"].collectAsState()
   val borderStyle by remember {
     derivedStateOf {
@@ -435,17 +435,21 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
       },
     )
 
-    // 底部间距 (sub-margin-y)
+    // 底部间距：0 = 贴视频底端(sub-pos=100)，数值越大字幕越往上。
+    // 注：mediacodec_embed 下 sub-use-margins 必须=no，sub-margin-y 不生效，
+    // 故此处改绑 sub-pos（始终在视频帧内、可见）。
+    val bottomPadding = 100 - (subPos ?: preferences.subPos.get()).coerceIn(0, 100)
     LabeledSliderRow(
       icon = { Icon(Icons.Default.Height, null, modifier = Modifier.size(28.dp)) },
       label = stringResource(R.string.player_sheets_sub_bottom_padding),
-      value = subMarginY ?: preferences.subMarginY.get(),
+      value = bottomPadding.coerceIn(0, 100),
       min = 0,
-      max = 200,
-      valueText = (subMarginY ?: preferences.subMarginY.get()).toString(),
+      max = 100,
+      valueText = bottomPadding.coerceIn(0, 100).toString(),
       onChange = {
-        preferences.subMarginY.set(it)
-        MPVLib.setPropertyInt("sub-margin-y", it)
+        val newPos = (100 - it).coerceIn(0, 100)
+        preferences.subPos.set(newPos)
+        MPVLib.setPropertyInt("sub-pos", newPos)
       },
     )
 
@@ -541,11 +545,9 @@ private fun LabeledSliderRow(
   val haptic = LocalHapticFeedback.current
   Row(
     Modifier
-         Row(
-      Modifier
-        .fillMaxWidth()
-        .autoBringIntoView()
-        .padding(horizontal = MaterialTheme.spacing.medium),
+      .fillMaxWidth()
+      .autoBringIntoView()
+      .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
     ) {
