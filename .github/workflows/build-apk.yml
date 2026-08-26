@@ -75,16 +75,29 @@ jobs:
           git config --global https.lowSpeedLimit 1000
           git config --global https.lowSpeedTime 30
           MAX_TRIES=3
+          install_ok=0
           for i in $(seq 1 $MAX_TRIES); do
             echo "=== native install attempt $i/$MAX_TRIES ==="
             if buildscripts/include/ci.sh install; then
               echo "=== install ok ==="
+              install_ok=1
               break
             fi
             echo "[warn] install attempt $i failed; cleaning partial state and retrying in 15s..."
-            rm -rf deps/mpv prefix
+            # ci.sh cd's into buildscripts/, so the real paths are under
+            # buildscripts/ — NOT repo-root deps/mpv / prefix (that cleanup
+            # was a no-op and made every retry die on "already exists").
+            rm -rf buildscripts/deps/mpv buildscripts/prefix
+            # ci.sh's "ln -sv $ANDROID_HOME sdk/android-sdk-linux" is not
+            # idempotent: when the target dir already exists, ln drops a
+            # nested self-link inside it. Remove artifacts so retries work.
+            rm -f buildscripts/sdk/android-sdk-linux/android-sdk-linux
             sleep 15
           done
+          if [ "$install_ok" -ne 1 ]; then
+            echo "::error::native install failed after $MAX_TRIES attempts"
+            exit 1
+          fi
           MPV_ANDROID_NATIVE_ONLY=1 buildscripts/include/ci.sh build
 
       - name: Accept Android SDK licenses
