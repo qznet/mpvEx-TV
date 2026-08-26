@@ -17,9 +17,15 @@ jobs:
 
     env:
       MPV_GIT_REF: fongmi
-      # NOTE: kernel follows the fongmi branch (latest). To pin a specific kernel,
-      # set MPV_GIT_COMMIT (ci.sh supports it) - used e.g. for e7191f2a during
-      # the 2026-08-23 verification build.
+      # Pin a known-good kernel commit for reproducible builds. The fongmi branch
+      # HEAD broke the native build on 2026-08-25/26: player/playloop.c calls
+      # update_vo_chain_el_pair(), which is no longer declared (FongMi/mpv commit
+      # c318236b8882 "player: drop the enhancement-layer pairing when the media
+      # has no EL" missed a call site). 654e9382c0bbccb09ccac348f792e9d378e9c7a9
+      # is the last fongmi HEAD proven to compile (it was used by the successful
+      # 234b91c build). Bump this once upstream fongmi restores a working
+      # playloop.c. ci.sh honors MPV_GIT_COMMIT over MPV_GIT_REF.
+      MPV_GIT_COMMIT: 654e9382c0bbccb09ccac348f792e9d378e9c7a9
       # On push (auto): build v7a only — fast CI for device sideload.
       # On workflow_dispatch (manual): build full v8a + v7a.
       MPV_APK_ABIS: ${{ github.event_name == 'workflow_dispatch' && 'armeabi-v7a,arm64-v8a' || 'armeabi-v7a' }}
