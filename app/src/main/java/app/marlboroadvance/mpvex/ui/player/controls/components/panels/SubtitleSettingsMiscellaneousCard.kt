@@ -79,7 +79,8 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
             preferences.scaleByWindow.set(it)
             val value = if (it) "yes" else "no"
             MPVLib.setPropertyString("sub-scale-by-window", value)
-            MPVLib.setPropertyString("sub-use-margins", value)
+            // sub-use-margins stays "no" (see MPVView.setupSubtitlesOptions): under
+            // mediacodec_embed margins push subtitles outside the OSD Surface.
           },
           { Text(stringResource(R.string.player_sheets_sub_scale_by_window)) },
           summary = { Text(stringResource(R.string.player_sheets_sub_scale_by_window_summary)) },
@@ -141,7 +142,7 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
               scaleByWindow = defaultScaleByWindow
               val scaleValue = if (defaultScaleByWindow) "yes" else "no"
               MPVLib.setPropertyString("sub-scale-by-window", scaleValue)
-              MPVLib.setPropertyString("sub-use-margins", scaleValue)
+              // sub-use-margins stays "no" (see MPVView.setupSubtitlesOptions)
             },
           ) {
             Row {

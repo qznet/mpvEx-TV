@@ -121,13 +121,22 @@ class MPVView(
     // If user did not set vo in mpv.conf, set default after init
     // setVo(if (useGpuNext) "gpu-next" else "gpu")
     
-    // Set GPU API context (Vulkan or OpenGL) if using gpu/gpu-next
-    // (mediacodec_embed ignores these settings)
+    // Set GPU API context (Vulkan or OpenGL).
+    // NOTE: this is NOT only for gpu/gpu-next. vo=mediacodec_embed also needs a GPU
+    // context, because the OSD Surface (where subtitles/OSC are drawn) is rendered
+    // by mpv's gpu VO. With MediaCodec decoding the main video, mpv does not
+    // auto-create a GPU context, so without an explicit gpu-api the OSD Surface has
+    // none and subtitles never draw (log shows gpuApi=/gpuContext= empty). Always
+    // provide a context: Vulkan when requested, otherwise OpenGL (most compatible,
+    // and matches mpv's own default for the gpu VO).
     if (useVulkan) {
       MPVLib.setOptionString("gpu-api", "vulkan")
       MPVLib.setOptionString("gpu-context", "androidvk")
     } else if (useGpuNext) {
       MPVLib.setOptionString("gpu-api", "vulkan")
+      MPVLib.setOptionString("gpu-context", "android")
+    } else {
+      MPVLib.setOptionString("gpu-api", "opengl")
       MPVLib.setOptionString("gpu-context", "android")
     }
 
@@ -390,9 +399,13 @@ class MPVView(
 
     val scaleByWindow = if (subtitlesPreferences.scaleByWindow.get()) "yes" else "no"
     MPVLib.setOptionString("sub-scale-by-window", scaleByWindow)
-    MPVLib.setOptionString("sub-use-margins", scaleByWindow)
+    // Force sub-use-margins=no: with vo=mediacodec_embed the video is drawn into a
+    // Surface sized to the video rectangle, so margins would push subtitles into the
+    // letterbox area (outside the OSD Surface) where they never draw. Keep them inside
+    // the video frame instead. secondary-sub too.
+    MPVLib.setOptionString("sub-use-margins", "no")
+    MPVLib.setOptionString("secondary-sub-use-margins", "no")
     MPVLib.setOptionString("secondary-sub-scale-by-window", scaleByWindow)
-    MPVLib.setOptionString("secondary-sub-use-margins", scaleByWindow)
   }
 
 
