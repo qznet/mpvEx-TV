@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.item
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.CircleShape
@@ -116,46 +118,44 @@ fun EnhancedSubtitlesSheet(
   }
 
   PlayerSheet(onDismissRequest, modifier = modifier) {
-    val listState = rememberLazyListState()
-    LazyColumn(
-      state = listState,
-      modifier = Modifier.fillMaxWidth(),
-      contentPadding = PaddingValues(vertical = MaterialTheme.spacing.small),
-      verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
-    ) {
-      item {
-        // 0. 显示字幕 + 添加按钮 + 在线搜索/字幕延迟
-        ShowAddSubtitleHeader(
-          subtitlesVisible = subtitlesVisible,
-          onToggleVisible = {
-            if (subtitlesVisible) {
-              MPVLib.setPropertyString("sid", "no")
-            } else {
-              // 打开：优先复用当前 sid；若 sid<=0 则挑第一条可见字幕
-              val pick = tracks.firstOrNull { isSubtitleSelected(it.id) } ?: tracks.firstOrNull()
-              if (pick != null) {
-                MPVLib.setPropertyInt("sid", pick.id)
+    Column {
+      val listState = rememberLazyListState()
+      LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(vertical = MaterialTheme.spacing.small),
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
+      ) {
+        item {
+          // 0. 显示字幕 + 添加按钮 + 在线搜索/字幕延迟
+          ShowAddSubtitleHeader(
+            subtitlesVisible = subtitlesVisible,
+            onToggleVisible = {
+              if (subtitlesVisible) {
+                MPVLib.setPropertyString("sid", "no")
+              } else {
+                // 打开：优先复用当前 sid；若 sid<=0 则挑第一条可见字幕
+                val pick = tracks.firstOrNull { isSubtitleSelected(it.id) } ?: tracks.firstOrNull()
+                if (pick != null) {
+                  MPVLib.setPropertyInt("sid", pick.id)
+                }
               }
-            }
-          },
-          onAdd = onAddSubtitle,
-          onOnlineSearch = onOpenOnlineSearch,
-          onDelay = onOpenSubtitleDelay,
-        )
-      }
+            },
+            onAdd = onAddSubtitle,
+            onOnlineSearch = onOpenOnlineSearch,
+            onDelay = onOpenSubtitleDelay,
+          )
+        }
 
-      item {
-        // 1. 字幕轨道
+        // 1. 字幕轨道：每条轨道独立 item，确保 DPad 逐行滚到底部
         SubtitleTracksSection(
           tracks = tracks,
           isSelected = isSubtitleSelected,
           onToggle = onToggleSubtitle,
           onRemove = onRemoveSubtitle,
         )
-      }
 
-      item {
-        // 2. 字幕样式（字体/字号/底部间距/字体轮廓/文字颜色/强制覆盖 ASS）
+        // 2. 字幕样式：每个控件独立 item（字体/字号/底部间距/轮廓/颜色）
         SubtitleStyleSection(preferences = preferences)
       }
     }
@@ -217,13 +217,13 @@ private fun ShowAddSubtitleHeader(
 }
 
 @Composable
-private fun SubtitleTracksSection(
+private fun LazyListScope.SubtitleTracksSection(
   tracks: ImmutableList<TrackNode>,
   isSelected: (Int) -> Boolean,
   onToggle: (Int) -> Unit,
   onRemove: (Int) -> Unit,
 ) {
-  Column {
+  item {
     Text(
       text = stringResource(R.string.player_sheets_sub_tracks_section),
       modifier = Modifier.padding(horizontal = MaterialTheme.spacing.medium),
@@ -231,9 +231,11 @@ private fun SubtitleTracksSection(
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       fontWeight = FontWeight.SemiBold,
     )
-    val internal = tracks.filter { it.external != true }
-    val external = tracks.filter { it.external == true }
-    if (internal.isEmpty() && external.isEmpty()) {
+  }
+  val internal = tracks.filter { it.external != true }
+  val external = tracks.filter { it.external == true }
+  if (internal.isEmpty() && external.isEmpty()) {
+    item {
       Text(
         text = stringResource(R.string.player_sheets_sub_no_tracks_available),
         modifier = Modifier.padding(
@@ -243,11 +245,13 @@ private fun SubtitleTracksSection(
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
-    } else {
-      if (internal.isNotEmpty()) {
-        TrackGroupLabel(text = stringResource(R.string.player_sheets_sub_embedded_subtitles))
-      }
-      internal.forEach { track ->
+    }
+  } else {
+    if (internal.isNotEmpty()) {
+      item { TrackGroupLabel(text = stringResource(R.string.player_sheets_sub_embedded_subtitles)) }
+    }
+    internal.forEach { track ->
+      item {
         SubtitleTrackRow(
           title = getTrackTitle(track),
           isSelected = isSelected(track.id),
@@ -256,10 +260,12 @@ private fun SubtitleTracksSection(
           onRemove = null,
         )
       }
-      if (external.isNotEmpty() && internal.isNotEmpty()) {
-        TrackGroupLabel(text = stringResource(R.string.player_sheets_sub_external_subtitles))
-      }
-      external.forEach { track ->
+    }
+    if (external.isNotEmpty() && internal.isNotEmpty()) {
+      item { TrackGroupLabel(text = stringResource(R.string.player_sheets_sub_external_subtitles)) }
+    }
+    external.forEach { track ->
+      item {
         SubtitleTrackRow(
           title = getTrackTitle(track),
           isSelected = isSelected(track.id),
@@ -313,9 +319,9 @@ private fun SubtitleTrackRow(
   }
 }
 
-@SuppressLint("MutableCollectionMutableState")
+@SuppressLint("MutableCollectionMutableState", "UnrememberedMutableState")
 @Composable
-private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
+private fun LazyListScope.SubtitleStyleSection(preferences: SubtitlesPreferences) {
   val context = LocalContext.current
   val fileManager = koinInject<FileManager>()
   val fonts = remember { mutableListOf("Default") }
@@ -363,8 +369,7 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
     mutableStateOf(MPVLib.getPropertyString("sub-ass-override") == "force")
   }
 
-  Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller)) {
-    // 节标题
+  item {
     Text(
       text = stringResource(R.string.player_sheets_sub_style_section),
       modifier = Modifier.padding(horizontal = MaterialTheme.spacing.medium),
@@ -372,12 +377,14 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       fontWeight = FontWeight.SemiBold,
     )
+  }
 
+  item {
     // 强制覆盖 ASS 字幕样式
     Row(
       Modifier
         .fillMaxWidth()
-                .clickable {
+        .clickable {
           overrideAssSubs = !overrideAssSubs
           preferences.overrideAssSubs.set(overrideAssSubs)
           MPVLib.setPropertyString("sub-ass-override", if (overrideAssSubs) "force" else "scale")
@@ -395,12 +402,14 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
       )
       Switch(checked = overrideAssSubs, onCheckedChange = null)
     }
+  }
 
+  item {
     // 字体下拉
     Row(
       Modifier
         .fillMaxWidth()
-                .padding(horizontal = MaterialTheme.spacing.medium),
+        .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
     ) {
@@ -424,7 +433,9 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
         )
       }
     }
+  }
 
+  item {
     // 字号
     LabeledSliderRow(
       icon = { Icon(Icons.Default.FormatSize, null, modifier = Modifier.size(28.dp)) },
@@ -438,7 +449,9 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
         MPVLib.setPropertyInt("sub-font-size", it)
       },
     )
+  }
 
+  item {
     // 底部间距 (sub-pos)
     LabeledSliderRow(
       icon = { Icon(Icons.Default.Height, null, modifier = Modifier.size(28.dp)) },
@@ -452,12 +465,14 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
         MPVLib.setPropertyInt("sub-pos", it)
       },
     )
+  }
 
+  item {
     // 字体轮廓 segmented
     Row(
       Modifier
         .fillMaxWidth()
-                .padding(horizontal = MaterialTheme.spacing.medium),
+        .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
     ) {
@@ -487,10 +502,10 @@ private fun SubtitleStyleSection(preferences: SubtitlesPreferences) {
         }
       }
     }
-
-    // 文字颜色
-    SubtitleTextColorBlock(preferences)
   }
+
+  // 文字颜色：每个子行独立 item，确保能滚到底部
+  SubtitleTextColorBlock(preferences)
 }
 
 @Composable
@@ -556,7 +571,7 @@ private fun LabeledSliderRow(
 
 /** 文字颜色：当前色预览 + 4 个预设 + ARGB 滑块。 */
 @Composable
-private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
+private fun LazyListScope.SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
   var currentColor by remember {
     mutableIntStateOf(
       try {
@@ -579,12 +594,7 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
     MPVLib.setPropertyString("sub-color", argb.toColorHexString())
   }
 
-  Column(
-    Modifier
-      .padding(horizontal = MaterialTheme.spacing.medium)
-      ,
-    verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.extraSmall),
-  ) {
+  item {
     Row(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
@@ -597,6 +607,8 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
       )
       ColorSwatch(currentColor)
     }
+  }
+  item {
     Row(
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
       modifier = Modifier.fillMaxWidth(),
@@ -615,6 +627,8 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
         )
       }
     }
+  }
+  item {
     TintedSliderItem(
       label = "R",
       value = currentColor.red,
@@ -624,6 +638,8 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
       tint = Color.Red,
       modifier = Modifier,
     )
+  }
+  item {
     TintedSliderItem(
       label = "G",
       value = currentColor.green,
@@ -633,6 +649,8 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
       tint = Color.Green,
       modifier = Modifier,
     )
+  }
+  item {
     TintedSliderItem(
       label = "B",
       value = currentColor.blue,
@@ -642,6 +660,8 @@ private fun SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
       tint = Color.Blue,
       modifier = Modifier,
     )
+  }
+  item {
     TintedSliderItem(
       label = "A",
       value = currentColor.alpha,
