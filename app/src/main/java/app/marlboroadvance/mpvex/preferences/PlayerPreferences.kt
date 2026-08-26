@@ -6,6 +6,7 @@ import app.marlboroadvance.mpvex.preferences.preference.getEnum
 import app.marlboroadvance.mpvex.ui.player.PlayerOrientation
 import app.marlboroadvance.mpvex.ui.player.RepeatMode
 import app.marlboroadvance.mpvex.ui.player.VideoAspect
+import kotlinx.serialization.json.Json
 
 class PlayerPreferences(
   preferenceStore: PreferenceStore,
@@ -59,6 +60,30 @@ class PlayerPreferences(
   val useWavySeekbar = preferenceStore.getBoolean("use_wavy_seekbar", true)
 
   val customSkipDuration = preferenceStore.getInt("custom_skip_duration", 90)
+
+  /**
+   * User-defined mpv command buttons shown on the player overlay.
+   * Default: a single "片头" button that seeks to 90 seconds.
+   * Order in the list defines render order; reordering swaps elements.
+   */
+  val customButtons = preferenceStore.getObject(
+    key = "custom_buttons",
+    defaultValue = listOf(
+      CustomButton(id = "intro", label = "片头", command = "seek 90", enabled = true),
+    ),
+    serializer = { Json.encodeToString(it) },
+    deserializer = { str ->
+      if (str.isBlank()) {
+        emptyList()
+      } else {
+        runCatching { Json.decodeFromString<List<CustomButton>>(str) }
+          .getOrDefault(emptyList())
+      }
+    },
+  )
+
+  /** Vertical offset (dp) of the custom buttons row from the bottom of the screen. */
+  val customButtonsBottomMargin = preferenceStore.getInt("custom_buttons_bottom_margin", 70)
 
   val repeatMode = preferenceStore.getEnum("repeat_mode", RepeatMode.OFF)
   val shuffleEnabled = preferenceStore.getBoolean("shuffle_enabled", false)

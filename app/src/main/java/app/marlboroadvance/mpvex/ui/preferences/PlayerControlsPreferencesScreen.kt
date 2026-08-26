@@ -50,6 +50,7 @@ import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import app.marlboroadvance.mpvex.preferences.SeekbarStyle
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.Screen
+import app.marlboroadvance.mpvex.ui.preferences.CustomButtonsPreferencesScreen
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import kotlinx.serialization.Serializable
 import me.zhanghai.compose.preference.ListPreference
@@ -181,6 +182,28 @@ object PlayerControlsPreferencesScreen : Screen {
                 },
               )
               PreferenceIconSummary(buttons = portraitBottomButtons)
+            }
+          }
+          
+          // Custom Buttons Section
+          item {
+            PreferenceSectionHeader(title = "自定义按钮")
+          }
+
+          item {
+            PreferenceCard {
+              PreferenceCategoryWithEditButton(
+                title = "自定义按钮",
+                onClick = {
+                  backstack.add(CustomButtonsPreferencesScreen)
+                },
+              )
+              Text(
+                text = "在播放界面添加可运行 mpv 命令的自定义按钮（增删改、开关、排序、底边距）",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+              )
             }
           }
           

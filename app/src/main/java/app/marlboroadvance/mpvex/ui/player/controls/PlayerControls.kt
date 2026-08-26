@@ -116,6 +116,7 @@ import app.marlboroadvance.mpvex.ui.player.controls.components.SpeedControlSlide
 import app.marlboroadvance.mpvex.ui.player.controls.components.TextPlayerUpdate
 import app.marlboroadvance.mpvex.ui.player.controls.components.VolumeSlider
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.toFixed
+import app.marlboroadvance.mpvex.ui.player.controls.CustomButtonsRow
 import app.marlboroadvance.mpvex.ui.theme.controlColor
 import app.marlboroadvance.mpvex.ui.theme.playerRippleConfiguration
 import app.marlboroadvance.mpvex.ui.theme.spacing
@@ -187,6 +188,7 @@ fun PlayerControls(
     derivedStateOf { abs((playbackSpeed ?: 1f) - 1f) > 0.001f }
   }
   val playerTimeToDisappear by playerPreferences.playerTimeToDisappear.collectAsState()
+  val customButtonsBottomMargin by playerPreferences.customButtonsBottomMargin.collectAsState()
   val chapters by viewModel.chapters.collectAsState(persistentListOf())
   val playlistMode by playerPreferences.playlistMode.collectAsState()
     val haptic = LocalHapticFeedback.current
@@ -298,6 +300,7 @@ fun PlayerControls(
         val (volumeSlider, brightnessSlider) = createRefs()
         val unlockControlsButton = createRef()
         val (bottomRightControls, bottomLeftControls) = createRefs()
+        val customButtonsRow = createRef()
         val playerPauseButton = createRef()
         val seekbar = createRef()
         val (playerUpdates) = createRefs()
@@ -1191,6 +1194,51 @@ fun PlayerControls(
             onOpenPanel = onOpenPanel,
             viewModel = viewModel,
             activity = activity,
+          )
+        }
+
+        AnimatedVisibility(
+          visible = controlsShown && !areControlsLocked && !areSlidersShown,
+          enter =
+            if (!reduceMotion) {
+              slideInVertically(playerControlsEnterAnimationSpec()) { it } +
+                fadeIn(playerControlsEnterAnimationSpec())
+            } else {
+              fadeIn(playerControlsEnterAnimationSpec())
+            },
+          exit =
+            if (!reduceMotion) {
+              slideOutVertically(playerControlsExitAnimationSpec()) { it } +
+                fadeOut(playerControlsExitAnimationSpec())
+            } else {
+              fadeOut(playerControlsExitAnimationSpec())
+            },
+          modifier =
+            Modifier
+              .then(
+                if (showSystemNavigationBar) {
+                  val navBarPadding = WindowInsets.navigationBars.asPaddingValues()
+                  Modifier.padding(
+                    start = navBarPadding.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+                    end = navBarPadding.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+                  )
+                } else {
+                  Modifier
+                }
+              )
+              .constrainAs(customButtonsRow) {
+                bottom.linkTo(parent.bottom, customButtonsBottomMargin.dp)
+                start.linkTo(parent.start, spacing.large)
+                end.linkTo(parent.end, spacing.large)
+                width = Dimension.fillToConstraints
+              },
+        ) {
+          CustomButtonsRow(
+            hideBackground = hideBackground,
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .padding(horizontal = spacing.medium),
           )
         }
 
