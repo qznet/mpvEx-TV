@@ -282,13 +282,6 @@
   <string name="player_sheets_chapter_title_substitute_subtitle" translatable="false">Subtitle #%d</string>
   <string name="player_sheets_chapter_title_substitute_audio" translatable="false">Audio #%d</string>
   <string name="player_sheets_subtitles_settings_title">Subtitles settings</string>
-  <string name="player_sheets_sub_show_subtitles">Show subtitles</string>
-  <string name="player_sheets_sub_tracks_section">Subtitle tracks</string>
-  <string name="player_sheets_sub_no_tracks_available">No subtitle tracks available</string>
-  <string name="player_sheets_sub_embedded_subtitles">Embedded subtitles</string>
-  <string name="player_sheets_sub_external_subtitles">External subtitles</string>
-  <string name="player_sheets_sub_style_section">Subtitle style</string>
-  <string name="player_sheets_sub_bottom_padding">Bottom padding</string>
   <string name="player_sheets_subtitles_color_text">Text</string>
   <string name="player_sheets_subtitles_color_border">Border</string>
   <string name="player_sheets_subtitles_color_background">Background</string>

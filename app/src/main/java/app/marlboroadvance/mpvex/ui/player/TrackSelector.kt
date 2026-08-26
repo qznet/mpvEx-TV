@@ -538,22 +538,6 @@ class TrackSelector(
 
       val ignoreSubs = listOf("signs", "songs", "lyrics", "forced", "sdh", "colored", "karaoke")
 
-      // PASS -1: SINGLE-SUBTITLE FALLBACK
-      // If the loaded file has exactly one subtitle track in total (embedded + external),
-      // show it unconditionally — there's nothing to choose between, and a non-matching
-      // language must not leave the viewer with no subtitles. Runs after session
-      // inheritance so a manually toggled "subs off" from this session is still honored.
-      if (subTracks.size == 1) {
-        val only = subTracks.first()
-        if (currentSid == only.id) {
-          Log.d(TAG, "Smart Sub: Sole subtitle track in file (id=${only.id}, lang=${only.lang}) [Already Active. Skipping Change.]")
-        } else {
-          Log.d(TAG, "Smart Sub: Sole subtitle track in file (id=${only.id}, lang=${only.lang}) [Applied]")
-          MPVLib.setPropertyInt("sid", only.id)
-        }
-        return
-      }
-
       // PASS 00: EXTERNAL TRACK OVERRIDE (Protects manually loaded subtitle files)
       for (track in subTracks) {
         if (track.external) {

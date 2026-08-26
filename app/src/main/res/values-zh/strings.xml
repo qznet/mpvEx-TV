@@ -286,13 +286,6 @@
   <string name="player_sheets_add_ext_audio">添加外部音频轨道</string>
   <string name="player_sheets_tracks_off">关闭</string>
   <string name="player_sheets_subtitles_settings_title">字幕设置</string>
-  <string name="player_sheets_sub_show_subtitles">显示字幕</string>
-  <string name="player_sheets_sub_tracks_section">字幕轨道</string>
-  <string name="player_sheets_sub_no_tracks_available">无可用字幕</string>
-  <string name="player_sheets_sub_embedded_subtitles">内嵌字幕</string>
-  <string name="player_sheets_sub_external_subtitles">外挂字幕</string>
-  <string name="player_sheets_sub_style_section">字幕样式</string>
-  <string name="player_sheets_sub_bottom_padding">底部间距</string>
   <string name="player_sheets_subtitles_color_text">文字颜色</string>
   <string name="player_sheets_subtitles_color_border">边框颜色</string>
   <string name="player_sheets_subtitles_color_background">背景颜色</string>

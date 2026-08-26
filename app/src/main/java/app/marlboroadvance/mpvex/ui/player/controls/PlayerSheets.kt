@@ -20,7 +20,7 @@ import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.FrameNavig
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.MoreSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.PlaybackSpeedSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.PlaylistSheet
-import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.EnhancedSubtitlesSheet
+import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.SubtitlesSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.OnlineSubtitleSearchSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.VideoZoomSheet
 import app.marlboroadvance.mpvex.utils.media.MediaInfoParser
@@ -138,15 +138,16 @@ fun PlayerSheets(
           )
       }
 
-      EnhancedSubtitlesSheet(
+      SubtitlesSheet(
         tracks = subtitles.toImmutableList(),
         onToggleSubtitle = onToggleSubtitle,
         isSubtitleSelected = isSubtitleSelected,
         onAddSubtitle = { showFilePicker = true },
         onRemoveSubtitle = onRemoveSubtitle,
-        onOpenOnlineSearch = { onShowSheet(Sheets.OnlineSubtitleSearch) },
+        onOpenSubtitleSettings = { onOpenPanel(Panels.SubtitleSettings) },
         onOpenSubtitleDelay = { onOpenPanel(Panels.SubtitleDelay) },
-        onDismissRequest = onDismissRequest,
+        onOpenOnlineSearch = { onShowSheet(Sheets.OnlineSubtitleSearch) },
+        onDismissRequest = onDismissRequest
       )
     }
 

@@ -79,6 +79,7 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
             preferences.scaleByWindow.set(it)
             val value = if (it) "yes" else "no"
             MPVLib.setPropertyString("sub-scale-by-window", value)
+            MPVLib.setPropertyString("sub-use-margins", value)
           },
           { Text(stringResource(R.string.player_sheets_sub_scale_by_window)) },
           summary = { Text(stringResource(R.string.player_sheets_sub_scale_by_window_summary)) },
@@ -140,7 +141,7 @@ fun SubtitlesMiscellaneousCard(modifier: Modifier = Modifier) {
               scaleByWindow = defaultScaleByWindow
               val scaleValue = if (defaultScaleByWindow) "yes" else "no"
               MPVLib.setPropertyString("sub-scale-by-window", scaleValue)
-              MPVLib.setPropertyString("sub-use-margins", "no")
+              MPVLib.setPropertyString("sub-use-margins", scaleValue)
             },
           ) {
             Row {

@@ -390,11 +390,9 @@ class MPVView(
 
     val scaleByWindow = if (subtitlesPreferences.scaleByWindow.get()) "yes" else "no"
     MPVLib.setOptionString("sub-scale-by-window", scaleByWindow)
-    // Keep sub-use-margins off: mediacodec_embed cannot draw into the letterbox area.
-    MPVLib.setOptionString("sub-use-margins", "no")
+    MPVLib.setOptionString("sub-use-margins", scaleByWindow)
     MPVLib.setOptionString("secondary-sub-scale-by-window", scaleByWindow)
-    MPVLib.setOptionString("secondary-sub-use-margins", "no")
-    MPVLib.setOptionString("sub-margin-y", subtitlesPreferences.subMarginY.get().toString())
+    MPVLib.setOptionString("secondary-sub-use-margins", scaleByWindow)
   }
 
 
