@@ -116,13 +116,19 @@ fun SubtitleSettingsTypographyCard(modifier: Modifier = Modifier) {
       val isItalic by MPVLib.propBoolean["sub-italic"].collectAsState()
       val mpvJustify by MPVLib.propString["sub-justify"].collectAsState()
       val justify by remember {
-        derivedStateOf { SubtitleJustification.entries.first { it.value == mpvJustify } }
+        derivedStateOf {
+          SubtitleJustification.entries.firstOrNull { it.value == mpvJustify }
+            ?: SubtitleJustification.Auto
+        }
       }
       val font by MPVLib.propString["sub-font"].collectAsState()
       val fontSize by MPVLib.propInt["sub-font-size"].collectAsState()
       val mpvBorderStyle by MPVLib.propString["sub-border-style"].collectAsState()
       val borderStyle by remember {
-        derivedStateOf { SubtitlesBorderStyle.entries.first { it.value == mpvBorderStyle } }
+        derivedStateOf {
+          SubtitlesBorderStyle.entries.firstOrNull { it.value == mpvBorderStyle }
+            ?: SubtitlesBorderStyle.OutlineAndShadow
+        }
       }
       val borderSize by MPVLib.propInt["sub-outline-size"].collectAsState()
       val shadowOffset by MPVLib.propInt["sub-shadow-offset"].collectAsState()
