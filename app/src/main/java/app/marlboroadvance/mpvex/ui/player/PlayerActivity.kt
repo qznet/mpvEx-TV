@@ -2185,10 +2185,7 @@ class PlayerActivity :
     val scaleByWindow = subtitlesPreferences.scaleByWindow.get()
     val scaleValue = if (scaleByWindow) "yes" else "no"
     MPVLib.setPropertyString("sub-scale-by-window", scaleValue)
-    // Force sub-use-margins=no (see MPVView.setupSubtitlesOptions for why):
-    // under vo=mediacodec_embed margins push subtitles into the letterbox area
-    // outside the OSD Surface and they never draw.
-    MPVLib.setPropertyString("sub-use-margins", "no")
+    MPVLib.setPropertyString("sub-use-margins", scaleValue)
 
     MPVLib.setPropertyFloat("sub-scale", subtitlesPreferences.subScale.get())
     MPVLib.setPropertyInt("sub-pos", subtitlesPreferences.subPos.get())
