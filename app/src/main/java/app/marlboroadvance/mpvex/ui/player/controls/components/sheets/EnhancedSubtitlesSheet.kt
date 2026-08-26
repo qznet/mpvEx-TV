@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.item
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.CircleShape
@@ -117,6 +116,73 @@ fun EnhancedSubtitlesSheet(
     derivedStateOf { (sidRaw?.toIntOrNull() ?: 0) > 0 }
   }
 
+  // ===== 字幕样式 state（提升到父函数，供 LazyListScope 扩展使用） =====
+  val context = LocalContext.current
+  val fileManager = koinInject<FileManager>()
+  val fonts = remember { mutableListOf("Default") }
+  val font by MPVLib.propString["sub-font"].collectAsState()
+  val fontSize by MPVLib.propInt["sub-font-size"].collectAsState()
+  val subPos by MPVLib.propInt["sub-pos"].collectAsState()
+  val mpvBorderStyle by MPVLib.propString["sub-border-style"].collectAsState()
+  val borderStyle by remember {
+    derivedStateOf {
+      SubtitlesBorderStyle.entries.firstOrNull { it.value == mpvBorderStyle }
+        ?: SubtitlesBorderStyle.OutlineAndShadow
+    }
+  }
+  val fontsLoadingIndicator = remember {
+    mutableStateOf<(@Composable () -> Unit)?> {
+      CircularProgressIndicator(Modifier.size(28.dp))
+    }
+  }
+  LaunchedEffect(Unit) {
+    withContext(Dispatchers.IO) {
+      val fontsDir = fileManager.fromPath(context.filesDir.path + "/fonts")
+      if (fileManager.exists(fontsDir)) {
+        fonts.addAll(
+          fileManager
+            .listFiles(fontsDir)
+            .filter {
+              fileManager.isFile(it) &&
+                fileManager.getName(it).lowercase().matches(".*\\.[ot]tf$".toRegex())
+            }
+            .mapNotNull {
+              runCatching {
+                TTFFile.open(fileManager.getInputStream(it) ?: return@mapNotNull null).families.values.first()
+              }.getOrNull()
+            }
+            .distinct(),
+        )
+      }
+      fontsLoadingIndicator.value = null
+    }
+  }
+  var overrideAssSubs by remember {
+    mutableStateOf(MPVLib.getPropertyString("sub-ass-override") == "force")
+  }
+
+  // ===== 文字颜色 state（提升到父函数） =====
+  var currentColor by remember {
+    mutableIntStateOf(
+      try {
+        MPVLib.getPropertyString("sub-color")?.uppercase()?.toColorInt() ?: preferences.textColor.get()
+      } catch (_: Throwable) {
+        preferences.textColor.get()
+      },
+    )
+  }
+  LaunchedEffect(Unit) {
+    try {
+      MPVLib.getPropertyString("sub-color")?.uppercase()?.toColorInt()?.let { currentColor = it }
+    } catch (_: Throwable) {
+    }
+  }
+  fun applyColor(argb: Int) {
+    currentColor = argb
+    preferences.textColor.set(argb)
+    MPVLib.setPropertyString("sub-color", argb.toColorHexString())
+  }
+
   PlayerSheet(onDismissRequest, modifier = modifier) {
     Column {
       val listState = rememberLazyListState()
@@ -156,7 +222,28 @@ fun EnhancedSubtitlesSheet(
         )
 
         // 2. 字幕样式：每个控件独立 item（字体/字号/底部间距/轮廓/颜色）
-        SubtitleStyleSection(preferences = preferences)
+        SubtitleStyleSection(
+          preferences = preferences,
+          fonts = fonts.toImmutableList(),
+          font = font,
+          fontSize = fontSize,
+          subPos = subPos,
+          borderStyle = borderStyle,
+          fontsLoadingIndicator = fontsLoadingIndicator.value,
+          overrideAssSubs = overrideAssSubs,
+          onToggleOverrideAss = {
+            overrideAssSubs = !overrideAssSubs
+            preferences.overrideAssSubs.set(overrideAssSubs)
+            MPVLib.setPropertyString("sub-ass-override", if (overrideAssSubs) "force" else "scale")
+            MPVLib.setPropertyString("secondary-sub-ass-override", if (overrideAssSubs) "force" else "scale")
+          },
+        )
+
+        // 3. 字幕文字颜色 ARGB 滑块：每通道独立 item
+        SubtitleTextColorBlock(
+          currentColor = currentColor,
+          onApplyColor = ::applyColor,
+        )
       }
     }
   }
@@ -216,7 +303,6 @@ private fun ShowAddSubtitleHeader(
   }
 }
 
-@Composable
 private fun LazyListScope.SubtitleTracksSection(
   tracks: ImmutableList<TrackNode>,
   isSelected: (Int) -> Boolean,
@@ -319,56 +405,17 @@ private fun SubtitleTrackRow(
   }
 }
 
-@SuppressLint("MutableCollectionMutableState", "UnrememberedMutableState")
-@Composable
-private fun LazyListScope.SubtitleStyleSection(preferences: SubtitlesPreferences) {
-  val context = LocalContext.current
-  val fileManager = koinInject<FileManager>()
-  val fonts = remember { mutableListOf("Default") }
-  val font by MPVLib.propString["sub-font"].collectAsState()
-  val fontSize by MPVLib.propInt["sub-font-size"].collectAsState()
-  // 底部间距映射到 mpv 的 sub-pos（0=顶部, 100=视频底, 可到 150 进入底部黑边）。
-  // 注意：旧实现误用 sub-margin-y，在 vo=mediacodec_embed 下 sub-margin-y=0 会使字幕被裁掉/消失；
-  // 这里与 SubtitleSettingsMiscellaneousCard 保持一致用 sub-pos，避免“底部间距=0 字幕消失”。
-  val subPos by MPVLib.propInt["sub-pos"].collectAsState()
-  val mpvBorderStyle by MPVLib.propString["sub-border-style"].collectAsState()
-  val borderStyle by remember {
-    derivedStateOf {
-      SubtitlesBorderStyle.entries.firstOrNull { it.value == mpvBorderStyle }
-        ?: SubtitlesBorderStyle.OutlineAndShadow
-    }
-  }
-  var fontsLoadingIndicator by remember {
-    val indicator: (@Composable () -> Unit) = { CircularProgressIndicator(Modifier.size(28.dp)) }
-    mutableStateOf<(@Composable () -> Unit)?>(indicator)
-  }
-  LaunchedEffect(Unit) {
-    withContext(Dispatchers.IO) {
-      val fontsDir = fileManager.fromPath(context.filesDir.path + "/fonts")
-      if (fileManager.exists(fontsDir)) {
-        fonts.addAll(
-          fileManager
-            .listFiles(fontsDir)
-            .filter {
-              fileManager.isFile(it) &&
-                fileManager.getName(it).lowercase().matches(".*\\.[ot]tf$".toRegex())
-            }
-            .mapNotNull {
-              runCatching {
-                TTFFile.open(fileManager.getInputStream(it) ?: return@mapNotNull null).families.values.first()
-              }.getOrNull()
-            }
-            .distinct(),
-        )
-      }
-      fontsLoadingIndicator = null
-    }
-  }
-
-  var overrideAssSubs by remember {
-    mutableStateOf(MPVLib.getPropertyString("sub-ass-override") == "force")
-  }
-
+private fun LazyListScope.SubtitleStyleSection(
+  preferences: SubtitlesPreferences,
+  fonts: ImmutableList<String>,
+  font: String?,
+  fontSize: Int?,
+  subPos: Int?,
+  borderStyle: SubtitlesBorderStyle,
+  fontsLoadingIndicator: (@Composable () -> Unit)?,
+  overrideAssSubs: Boolean,
+  onToggleOverrideAss: () -> Unit,
+) {
   item {
     Text(
       text = stringResource(R.string.player_sheets_sub_style_section),
@@ -384,12 +431,7 @@ private fun LazyListScope.SubtitleStyleSection(preferences: SubtitlesPreferences
     Row(
       Modifier
         .fillMaxWidth()
-        .clickable {
-          overrideAssSubs = !overrideAssSubs
-          preferences.overrideAssSubs.set(overrideAssSubs)
-          MPVLib.setPropertyString("sub-ass-override", if (overrideAssSubs) "force" else "scale")
-          MPVLib.setPropertyString("secondary-sub-ass-override", if (overrideAssSubs) "force" else "scale")
-        }
+        .clickable(onClick = onToggleOverrideAss)
         .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.smaller),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
@@ -421,7 +463,7 @@ private fun LazyListScope.SubtitleStyleSection(preferences: SubtitlesPreferences
       Box(Modifier.weight(1f)) {
         ExposedTextDropDownMenu(
           selectedValue = font.orEmpty().ifEmpty { "Default" },
-          options = fonts.toImmutableList(),
+          options = fonts,
           label = stringResource(R.string.player_sheets_sub_typography_font),
           onValueChangedEvent = {
             val actualFont = if (it == "Default") "" else it
@@ -503,9 +545,6 @@ private fun LazyListScope.SubtitleStyleSection(preferences: SubtitlesPreferences
       }
     }
   }
-
-  // 文字颜色：每个子行独立 item，确保能滚到底部
-  SubtitleTextColorBlock(preferences)
 }
 
 @Composable
@@ -569,31 +608,11 @@ private fun LabeledSliderRow(
   }
 }
 
-/** 文字颜色：当前色预览 + 4 个预设 + ARGB 滑块。 */
-@Composable
-private fun LazyListScope.SubtitleTextColorBlock(preferences: SubtitlesPreferences) {
-  var currentColor by remember {
-    mutableIntStateOf(
-      try {
-        MPVLib.getPropertyString("sub-color")?.uppercase()?.toColorInt() ?: preferences.textColor.get()
-      } catch (_: Throwable) {
-        preferences.textColor.get()
-      },
-    )
-  }
-  LaunchedEffect(Unit) {
-    try {
-      MPVLib.getPropertyString("sub-color")?.uppercase()?.toColorInt()?.let { currentColor = it }
-    } catch (_: Throwable) {
-    }
-  }
-
-  fun applyColor(argb: Int) {
-    currentColor = argb
-    preferences.textColor.set(argb)
-    MPVLib.setPropertyString("sub-color", argb.toColorHexString())
-  }
-
+/** 文字颜色：当前色预览 + 4 个预设 + ARGB 滑块。每个子行独立 item。 */
+private fun LazyListScope.SubtitleTextColorBlock(
+  currentColor: Int,
+  onApplyColor: (Int) -> Unit,
+) {
   item {
     Row(
       verticalAlignment = Alignment.CenterVertically,
@@ -623,7 +642,7 @@ private fun LazyListScope.SubtitleTextColorBlock(preferences: SubtitlesPreferenc
         ColorPresetChip(
           color = preset,
           selected = currentColor.copyAsArgb(alpha = 255) == preset.copyAsArgb(alpha = 255),
-          onClick = { applyColor(preset) },
+          onClick = { onApplyColor(preset) },
         )
       }
     }
@@ -633,7 +652,7 @@ private fun LazyListScope.SubtitleTextColorBlock(preferences: SubtitlesPreferenc
       label = "R",
       value = currentColor.red,
       valueText = currentColor.red.toString(),
-      onChange = { v -> applyColor(currentColor.copyAsArgb(red = v)) },
+      onChange = { v -> onApplyColor(currentColor.copyAsArgb(red = v)) },
       max = 255,
       tint = Color.Red,
       modifier = Modifier,
@@ -644,7 +663,7 @@ private fun LazyListScope.SubtitleTextColorBlock(preferences: SubtitlesPreferenc
       label = "G",
       value = currentColor.green,
       valueText = currentColor.green.toString(),
-      onChange = { v -> applyColor(currentColor.copyAsArgb(green = v)) },
+      onChange = { v -> onApplyColor(currentColor.copyAsArgb(green = v)) },
       max = 255,
       tint = Color.Green,
       modifier = Modifier,
@@ -655,7 +674,7 @@ private fun LazyListScope.SubtitleTextColorBlock(preferences: SubtitlesPreferenc
       label = "B",
       value = currentColor.blue,
       valueText = currentColor.blue.toString(),
-      onChange = { v -> applyColor(currentColor.copyAsArgb(blue = v)) },
+      onChange = { v -> onApplyColor(currentColor.copyAsArgb(blue = v)) },
       max = 255,
       tint = Color.Blue,
       modifier = Modifier,
@@ -666,7 +685,7 @@ private fun LazyListScope.SubtitleTextColorBlock(preferences: SubtitlesPreferenc
       label = "A",
       value = currentColor.alpha,
       valueText = currentColor.alpha.toString(),
-      onChange = { v -> applyColor(currentColor.copyAsArgb(alpha = v)) },
+      onChange = { v -> onApplyColor(currentColor.copyAsArgb(alpha = v)) },
       max = 255,
       tint = Color.White,
       modifier = Modifier,
