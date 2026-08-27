@@ -159,8 +159,8 @@ gh workflow run "Build APK" -R qznet/mpvEx-TV -r fongmi-kernel
      app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk \
      app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk \
      --repo qznet/mpvEx-TV \
-     --title "mpv NAS Player vx.x.x (FongMi kernel)" \
-     --notes "mpv NAS Player vx.x.x — source-built FongMi/mpv kernel"
+     --title "mpvExTV vx.x.x (FongMi kernel)" \
+     --notes "mpvExTV vx.x.x — source-built FongMi/mpv kernel"
    ```
 
    > For this fork the published artifacts are **only `armeabi-v7a` + `arm64-v8a`** APKs (no x86/universal), released on `qznet/mpvEx-TV`.

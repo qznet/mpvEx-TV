@@ -140,7 +140,7 @@ jobs:
           gh release create "$TAG" \
             app/build/outputs/apk/default/release/*.apk \
             -R qznet/mpvEx-TV \
-            --title "mpv NAS Player ${VERSION} (FongMi kernel) build ${{ github.run_number }}" \
+            --title "mpvExTV ${VERSION} final 1 版 (FongMi kernel) build ${{ github.run_number }}" \
             --notes "Source-built FongMi/mpv kernel (fongmi branch), armeabi-v7a + arm64-v8a. Built from $(git rev-parse --short HEAD)."
 
       - name: Skip release on push (manual Run workflow required)
