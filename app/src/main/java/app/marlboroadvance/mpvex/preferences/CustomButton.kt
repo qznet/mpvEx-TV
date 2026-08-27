@@ -20,7 +20,21 @@ data class CustomButton(
   val label: String,
   val command: String,
   val enabled: Boolean = true,
-)
+) {
+  /**
+   * Execute this button's mpv command.
+   *
+   * Dispatch is routed through [MPVLib.command], which links to the FongMi native JNI symbol
+   * `Java_is_xyz_mpv_MPVLib_command` (vararg String overload kept for qznet UI ergonomics).
+   * A blank/empty command is a no-op.
+   */
+  fun execute() {
+    val tokens = tokenize(command.trim())
+    if (tokens.isNotEmpty()) {
+      MPVLib.command(*tokens.toTypedArray())
+    }
+  }
+}
 
 /**
  * Split an mpv command string into tokens, honouring double-quoted arguments that may
@@ -44,18 +58,4 @@ private fun tokenize(raw: String): List<String> {
   }
   if (sb.isNotEmpty()) tokens.add(sb.toString())
   return tokens
-}
-
-/**
- * Execute this button's mpv command.
- *
- * Dispatch is routed through [MPVLib.command], which links to the FongMi native JNI symbol
- * `Java_is_xyz_mpv_MPVLib_command` (vararg String overload kept for qznet UI ergonomics).
- * A blank/empty command is a no-op.
- */
-fun CustomButton.execute() {
-  val tokens = tokenize(command.trim())
-  if (tokens.isNotEmpty()) {
-    MPVLib.command(*tokens.toTypedArray())
-  }
 }

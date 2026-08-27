@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,7 +49,7 @@ fun CustomButtonsRow(
 
   Row(
     modifier = modifier,
-    horizontalArrangement = Arrangement.spacedBy(spacing.small),
+    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     enabledButtons.forEach { button ->
