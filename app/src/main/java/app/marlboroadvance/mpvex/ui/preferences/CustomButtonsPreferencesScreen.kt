@@ -186,9 +186,6 @@ object CustomButtonsPreferencesScreen : Screen {
                 fontWeight = FontWeight.Bold,
               )
             },
-            supportingContent = {
-              Text(text = "命令: ${button.command}")
-            },
             leadingContent = {
               androidx.compose.material3.Checkbox(
                 checked = button.enabled,

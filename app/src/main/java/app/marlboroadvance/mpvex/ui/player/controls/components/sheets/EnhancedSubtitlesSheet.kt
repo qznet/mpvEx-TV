@@ -173,6 +173,9 @@ fun EnhancedSubtitlesSheet(
     mutableStateOf(MPVLib.getPropertyString("sub-ass-override") == "force")
   }
 
+  // 字幕菜单面板透明度（非字幕本身；控制 PlayerSheet 背景 alpha）
+  var sheetOpacity by remember { mutableStateOf(preferences.sheetOpacity.get()) }
+
   // ===== 文字颜色 state（提升到父函数） =====
   var currentColor by remember {
     mutableIntStateOf(
@@ -200,7 +203,7 @@ fun EnhancedSubtitlesSheet(
     MPVLib.setPropertyString("secondary-sub-font", actualFont)
   }
 
-  PlayerSheet(onDismissRequest, modifier = modifier) {
+  PlayerSheet(onDismissRequest, modifier = modifier, surfaceAlpha = sheetOpacity) {
     Column {
       val listState = rememberLazyListState()
       LazyColumn(
@@ -209,16 +212,19 @@ fun EnhancedSubtitlesSheet(
         contentPadding = PaddingValues(vertical = MaterialTheme.spacing.small),
         verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
       ) {
-        // 0. 字幕透明度（放在最上面，拖动即实时改变字幕 alpha，直观可见效果）
+        // 0. 菜单面板透明度（放在最上面，拖动即实时改变字幕菜单本身的背景透明度，直观可见效果）
         item {
           LabeledSliderRow(
             icon = { Icon(Icons.Default.Visibility, null, modifier = Modifier.size(28.dp)) },
-            label = "字幕透明度",
-            value = currentColor.alpha,
-            min = 0,
-            max = 255,
-            valueText = currentColor.alpha.toString(),
-            onChange = { applyColor(currentColor.copyAsArgb(alpha = it)) },
+            label = "菜单透明度",
+            value = (sheetOpacity * 100).toInt().coerceIn(20, 100),
+            min = 20,
+            max = 100,
+            valueText = "${(sheetOpacity * 100).toInt()}%",
+            onChange = {
+              sheetOpacity = it / 100f
+              preferences.sheetOpacity.set(sheetOpacity)
+            },
           )
         }
 
@@ -237,10 +243,9 @@ fun EnhancedSubtitlesSheet(
                 }
               }
             },
-            onAdd = onAddSubtitle,
-            onOnlineSearch = onOpenOnlineSearch,
-            onDelay = onOpenSubtitleDelay,
-          )
+          onAdd = onAddSubtitle,
+          onOnlineSearch = onOpenOnlineSearch,
+        )
         }
 
         // 2. 字幕轨道：每条轨道独立 item，确保 DPad 逐行滚到底部
@@ -269,6 +274,26 @@ fun EnhancedSubtitlesSheet(
           onOpenFontPicker = { showFontPicker = true },
         )
 
+        // 3.5 字幕延迟：独立行（原为添加外部字幕行右侧的时钟图标，TV 无法选中；抽出为独立行置于字幕颜色上方）
+        item {
+          Row(
+            Modifier
+              .fillMaxWidth()
+              .clickable(onClick = onOpenSubtitleDelay)
+              .height(56.dp)
+              .padding(horizontal = MaterialTheme.spacing.medium),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
+          ) {
+            Icon(Icons.Default.MoreTime, contentDescription = null, modifier = Modifier.size(24.dp))
+            Text(
+              text = stringResource(R.string.player_sheets_sub_delay_card_title),
+              style = MaterialTheme.typography.bodyLarge,
+              modifier = Modifier.weight(1f),
+            )
+          }
+        }
+
         // 4. 字幕文字颜色 ARGB 滑块：每通道独立 item
         SubtitleTextColorBlock(
           currentColor = currentColor,
@@ -295,7 +320,6 @@ private fun ShowAddSubtitleHeader(
   onToggleVisible: () -> Unit,
   onAdd: () -> Unit,
   onOnlineSearch: () -> Unit,
-  onDelay: () -> Unit,
 ) {
   Column {
     Row(
@@ -335,9 +359,6 @@ private fun ShowAddSubtitleHeader(
       )
       IconButton(onClick = onOnlineSearch) {
         Icon(Icons.Default.Search, contentDescription = null)
-      }
-      IconButton(onClick = onDelay) {
-        Icon(Icons.Default.MoreTime, contentDescription = null)
       }
     }
   }

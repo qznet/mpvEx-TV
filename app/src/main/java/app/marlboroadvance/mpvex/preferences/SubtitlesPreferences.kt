@@ -35,6 +35,7 @@ class SubtitlesPreferences(
 
   val justification = preferenceStore.getEnum("sub_justify", SubtitleJustification.Auto)
   val subPos = preferenceStore.getInt("sub_pos", 100)
+  val sheetOpacity = preferenceStore.getFloat("sub_sheet_opacity", 1f)
 
   val overrideAssSubs = preferenceStore.getBoolean("sub_override_ass")
   val scaleByWindow = preferenceStore.getBoolean("sub_scale_by_window", true)

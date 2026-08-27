@@ -74,6 +74,7 @@ fun PlayerSheet(
   customMaxWidth: Dp? = null,
   customMaxHeight: Dp? = null,
   surfaceColor: Color? = null,
+  surfaceAlpha: Float = 1f,
   content: @Composable () -> Unit,
 ) {
   val scope = rememberCoroutineScope()
@@ -173,7 +174,7 @@ fun PlayerSheet(
               .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
           ).imePadding(),
       shape = MaterialTheme.shapes.extraLarge.copy(bottomEnd = ZeroCornerSize, bottomStart = ZeroCornerSize),
-      color = surfaceColor ?: MaterialTheme.colorScheme.surface,
+      color = (surfaceColor ?: MaterialTheme.colorScheme.surface).copy(alpha = surfaceAlpha),
       tonalElevation = tonalElevation,
       content = {
         BackHandler(
