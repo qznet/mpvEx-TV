@@ -11,19 +11,23 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ClosedCaptionOff
 import androidx.compose.material.icons.filled.Delete
@@ -33,12 +37,13 @@ import androidx.compose.material.icons.filled.MoreTime
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Style
-import androidx.compose.material3.Checkbox
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,11 +52,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -60,6 +69,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.core.graphics.alpha
 import androidx.core.graphics.blue
 import androidx.core.graphics.green
@@ -67,7 +77,6 @@ import androidx.core.graphics.red
 import androidx.core.graphics.toColorInt
 import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.preferences.SubtitlesPreferences
-import app.marlboroadvance.mpvex.presentation.components.ExposedTextDropDownMenu
 import app.marlboroadvance.mpvex.presentation.components.PlayerSheet
 import app.marlboroadvance.mpvex.presentation.components.TintedSliderItem
 import app.marlboroadvance.mpvex.ui.player.TrackNode
@@ -88,12 +97,13 @@ import org.koin.compose.koinInject
  * 一级字幕菜单：点按播放界面 SUBTITLES 按钮后弹出。
  *
  * 与原 [SubtitlesSheet] 不同，本表把"用户可见"的字幕设置（显示开关 / 轨道 / 添加本地字幕 /
- * 字幕样式：字体、字号、底部间距、字体轮廓、文字颜色、强制覆盖 ASS）一次性铺开，省去二级面板跳转。
+ * 字幕样式：透明度、字体、字号、底部间距、字体轮廓、文字颜色、强制覆盖 ASS）一次性铺开，省去二级面板跳转。
  *
  * 字幕延迟仍由长按 SUBTITLES 触发（即 [SubtitleDelayPanel]），菜单头部"更多时间"按钮提供等效入口。
  *
  * TV 适配：内容较长，使用 `LazyColumn`（`rememberLazyListState`）承载，原生支持遥控器 DPad
  * 聚焦项自动滚入视口，方向键可一路滚到底部（与原始 SubtitlesSheet/GenericTracksSheet 一致）。
+ * 字体选择改用二级 Dialog 弹层（避免 Material3 ExposedDropdownMenuBox 在 TV 上吃掉焦点导致卡死）。
  */
 
 @SuppressLint("MutableCollectionMutableState", "UnrememberedMutableState")
@@ -116,10 +126,16 @@ fun EnhancedSubtitlesSheet(
     derivedStateOf { (sidRaw?.toIntOrNull() ?: 0) > 0 }
   }
 
-  // ===== 字幕样式 state（提升到父函数，供 LazyListScope 扩展使用） =====
+  // 字体列表（状态化，加载完成后自动刷新）与加载标志
   val context = LocalContext.current
   val fileManager = koinInject<FileManager>()
-  val fonts = remember { mutableListOf("Default") }
+  val fonts = remember { mutableStateListOf("Default") }
+  var fontsLoading by remember { mutableStateOf(true) }
+
+  // 二级字体选择弹层开关
+  var showFontPicker by remember { mutableStateOf(false) }
+
+  // ===== 字幕样式 state（提升到父函数，供 LazyListScope 扩展使用） =====
   val font by MPVLib.propString["sub-font"].collectAsState()
   val fontSize by MPVLib.propInt["sub-font-size"].collectAsState()
   val subPos by MPVLib.propInt["sub-pos"].collectAsState()
@@ -130,11 +146,7 @@ fun EnhancedSubtitlesSheet(
         ?: SubtitlesBorderStyle.OutlineAndShadow
     }
   }
-  val fontsLoadingIndicator = remember {
-    mutableStateOf<(@Composable () -> Unit)?> {
-      CircularProgressIndicator(Modifier.size(28.dp))
-    }
-  }
+
   LaunchedEffect(Unit) {
     withContext(Dispatchers.IO) {
       val fontsDir = fileManager.fromPath(context.filesDir.path + "/fonts")
@@ -154,7 +166,7 @@ fun EnhancedSubtitlesSheet(
             .distinct(),
         )
       }
-      fontsLoadingIndicator.value = null
+      fontsLoading = false
     }
   }
   var overrideAssSubs by remember {
@@ -182,6 +194,11 @@ fun EnhancedSubtitlesSheet(
     preferences.textColor.set(argb)
     MPVLib.setPropertyString("sub-color", argb.toColorHexString())
   }
+  fun applyFont(actualFont: String) {
+    preferences.font.set(actualFont)
+    MPVLib.setPropertyString("sub-font", actualFont)
+    MPVLib.setPropertyString("secondary-sub-font", actualFont)
+  }
 
   PlayerSheet(onDismissRequest, modifier = modifier) {
     Column {
@@ -192,8 +209,21 @@ fun EnhancedSubtitlesSheet(
         contentPadding = PaddingValues(vertical = MaterialTheme.spacing.small),
         verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
       ) {
+        // 0. 字幕透明度（放在最上面，拖动即实时改变字幕 alpha，直观可见效果）
         item {
-          // 0. 显示字幕 + 添加按钮 + 在线搜索/字幕延迟
+          LabeledSliderRow(
+            icon = { Icon(Icons.Default.Visibility, null, modifier = Modifier.size(28.dp)) },
+            label = "字幕透明度",
+            value = currentColor.alpha,
+            min = 0,
+            max = 255,
+            valueText = currentColor.alpha.toString(),
+            onChange = { applyColor(currentColor.copyAsArgb(alpha = it)) },
+          )
+        }
+
+        item {
+          // 1. 显示字幕 + 添加按钮 + 在线搜索/字幕延迟
           ShowAddSubtitleHeader(
             subtitlesVisible = subtitlesVisible,
             onToggleVisible = {
@@ -213,7 +243,7 @@ fun EnhancedSubtitlesSheet(
           )
         }
 
-        // 1. 字幕轨道：每条轨道独立 item，确保 DPad 逐行滚到底部
+        // 2. 字幕轨道：每条轨道独立 item，确保 DPad 逐行滚到底部
         SubtitleTracksSection(
           tracks = tracks,
           isSelected = isSubtitleSelected,
@@ -221,15 +251,14 @@ fun EnhancedSubtitlesSheet(
           onRemove = onRemoveSubtitle,
         )
 
-        // 2. 字幕样式：每个控件独立 item（字体/字号/底部间距/轮廓/颜色）
+        // 3. 字幕样式：每个控件独立 item（透明度已置顶；字体/字号/底部间距/轮廓/颜色）
         SubtitleStyleSection(
           preferences = preferences,
-          fonts = fonts.toImmutableList(),
           font = font,
+          fontsLoading = fontsLoading,
           fontSize = fontSize,
           subPos = subPos,
           borderStyle = borderStyle,
-          fontsLoadingIndicator = fontsLoadingIndicator.value,
           overrideAssSubs = overrideAssSubs,
           onToggleOverrideAss = {
             overrideAssSubs = !overrideAssSubs
@@ -237,14 +266,25 @@ fun EnhancedSubtitlesSheet(
             MPVLib.setPropertyString("sub-ass-override", if (overrideAssSubs) "force" else "scale")
             MPVLib.setPropertyString("secondary-sub-ass-override", if (overrideAssSubs) "force" else "scale")
           },
+          onOpenFontPicker = { showFontPicker = true },
         )
 
-        // 3. 字幕文字颜色 ARGB 滑块：每通道独立 item
+        // 4. 字幕文字颜色 ARGB 滑块：每通道独立 item
         SubtitleTextColorBlock(
           currentColor = currentColor,
           onApplyColor = ::applyColor,
         )
       }
+    }
+
+    // 二级字体选择弹层（TV 友好的 Dialog + LazyColumn）
+    if (showFontPicker) {
+      FontPickerDialog(
+        fonts = fonts.toImmutableList(),
+        currentFont = font,
+        onSelect = { applyFont(it) },
+        onDismiss = { showFontPicker = false },
+      )
     }
   }
 }
@@ -261,7 +301,7 @@ private fun ShowAddSubtitleHeader(
     Row(
       Modifier
         .fillMaxWidth()
-                .clickable(onClick = onToggleVisible)
+        .clickable(onClick = onToggleVisible)
         .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.smaller),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
@@ -281,7 +321,7 @@ private fun ShowAddSubtitleHeader(
     Row(
       Modifier
         .fillMaxWidth()
-                .clickable(onClick = onAdd)
+        .clickable(onClick = onAdd)
         .height(56.dp)
         .padding(horizontal = MaterialTheme.spacing.medium),
       verticalAlignment = Alignment.CenterVertically,
@@ -388,12 +428,12 @@ private fun SubtitleTrackRow(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-            .clickable(onClick = onToggle)
+      .clickable(onClick = onToggle)
       .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
   ) {
-    Checkbox(checked = isSelected, onCheckedChange = { onToggle() })
+    androidx.compose.material3.Checkbox(checked = isSelected, onCheckedChange = { onToggle() })
     Text(
       title,
       fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
@@ -407,14 +447,14 @@ private fun SubtitleTrackRow(
 
 private fun LazyListScope.SubtitleStyleSection(
   preferences: SubtitlesPreferences,
-  fonts: ImmutableList<String>,
   font: String?,
+  fontsLoading: Boolean,
   fontSize: Int?,
   subPos: Int?,
   borderStyle: SubtitlesBorderStyle,
-  fontsLoadingIndicator: (@Composable () -> Unit)?,
   overrideAssSubs: Boolean,
   onToggleOverrideAss: () -> Unit,
+  onOpenFontPicker: () -> Unit,
 ) {
   item {
     Text(
@@ -447,11 +487,13 @@ private fun LazyListScope.SubtitleStyleSection(
   }
 
   item {
-    // 字体下拉
+    // 字体：点击打开二级弹层选择（避免 ExposedDropdownMenuBox 在 TV 上卡死 DPad）
+    val currentFontLabel = font.orEmpty().ifEmpty { "Default" }
     Row(
       Modifier
         .fillMaxWidth()
-        .padding(horizontal = MaterialTheme.spacing.medium),
+        .clickable(onClick = onOpenFontPicker)
+        .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.smaller),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
     ) {
@@ -460,19 +502,19 @@ private fun LazyListScope.SubtitleStyleSection(
         null,
         modifier = Modifier.size(28.dp),
       )
-      Box(Modifier.weight(1f)) {
-        ExposedTextDropDownMenu(
-          selectedValue = font.orEmpty().ifEmpty { "Default" },
-          options = fonts,
-          label = stringResource(R.string.player_sheets_sub_typography_font),
-          onValueChangedEvent = {
-            val actualFont = if (it == "Default") "" else it
-            preferences.font.set(actualFont)
-            MPVLib.setPropertyString("sub-font", actualFont)
-            MPVLib.setPropertyString("secondary-sub-font", actualFont)
-          },
-          leadingIcon = fontsLoadingIndicator,
+      Column(Modifier.weight(1f)) {
+        Text(
+          text = stringResource(R.string.player_sheets_sub_typography_font),
+          style = MaterialTheme.typography.bodyMedium,
         )
+        Text(
+          text = if (fontsLoading) "加载中…" else currentFontLabel,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      if (fontsLoading) {
+        CircularProgressIndicator(modifier = Modifier.size(20.dp))
       }
     }
   }
@@ -561,7 +603,7 @@ private fun SegmentedChip(
     else MaterialTheme.colorScheme.onSurfaceVariant
   Box(
     modifier = Modifier
-            .clickable(onClick = onClick)
+      .clickable(onClick = onClick)
       .background(bg, shape = RoundedCornerShape(20.dp))
       .padding(horizontal = MaterialTheme.spacing.medium, vertical = MaterialTheme.spacing.extraSmall),
   ) {
@@ -583,7 +625,7 @@ private fun LabeledSliderRow(
   Row(
     Modifier
       .fillMaxWidth()
-            .padding(horizontal = MaterialTheme.spacing.medium),
+      .padding(horizontal = MaterialTheme.spacing.medium),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
   ) {
@@ -605,6 +647,81 @@ private fun LabeledSliderRow(
       valueRange = min.toFloat()..max.toFloat(),
       steps = (max - min).coerceAtLeast(0),
     )
+  }
+}
+
+/**
+ * 二级字体选择弹层：Dialog + LazyColumn，遥控器 DPad 可在列表内逐行移动并选中，
+ * 不会像 ExposedDropdownMenuBox 那样吃掉焦点。选择后即时应用并关闭。
+ */
+@Composable
+private fun FontPickerDialog(
+  fonts: ImmutableList<String>,
+  currentFont: String?,
+  onSelect: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val currentFontLabel = currentFont.orEmpty().ifEmpty { "Default" }
+  val focusRequester = remember { FocusRequester() }
+
+  Dialog(onDismissRequest = onDismiss) {
+    Surface(
+      shape = RoundedCornerShape(16.dp),
+      color = MaterialTheme.colorScheme.surface,
+      tonalElevation = 4.dp,
+      modifier =
+        Modifier
+          .fillMaxWidth(0.9f)
+          .heightIn(max = 480.dp)
+          .focusRequester(focusRequester)
+          .focusProperties { canFocus = false },
+    ) {
+      Column(Modifier.fillMaxWidth()) {
+        Text(
+          text = stringResource(R.string.player_sheets_sub_typography_font),
+          style = MaterialTheme.typography.titleLarge,
+          fontWeight = FontWeight.Bold,
+          modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        )
+        LazyColumn(
+          state = rememberLazyListState(),
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .padding(bottom = 8.dp),
+        ) {
+          items(fonts) { fontName ->
+            val selected = currentFontLabel == fontName
+            Row(
+              Modifier
+                .fillMaxWidth()
+                .clickable {
+                  onSelect(if (fontName == "Default") "" else fontName)
+                  onDismiss()
+                }.padding(horizontal = 16.dp, vertical = 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              if (selected) {
+                Icon(Icons.Default.Check, null, modifier = Modifier.size(20.dp))
+              } else {
+                Spacer(Modifier.size(20.dp))
+              }
+              Text(
+                text = fontName,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                modifier = Modifier.weight(1f),
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  LaunchedEffect(Unit) {
+    focusRequester.requestFocus()
   }
 }
 
@@ -714,7 +831,7 @@ private fun ColorPresetChip(color: Int, selected: Boolean, onClick: () -> Unit) 
   val b = color and 0xFF
   Box(
     Modifier
-            .size(36.dp)
+      .size(36.dp)
       .background(Color(r, g, b), shape = CircleShape)
       .border(
         width = if (selected) 3.dp else 1.dp,

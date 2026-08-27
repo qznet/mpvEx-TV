@@ -91,7 +91,7 @@ private fun CustomButtonPill(
         .defaultMinSize(minWidth = 56.dp)
         .clickable {
           clickEvent()
-          haptic.performHapticFeedback(androidx.compose.ui.haptics.HapticFeedbackType.LongPress)
+          haptic.performHapticFeedback(HapticFeedbackType.LongPress)
           button.execute()
         },
   ) {
