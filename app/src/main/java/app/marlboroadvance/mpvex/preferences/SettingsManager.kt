@@ -3,6 +3,7 @@ package app.marlboroadvance.mpvex.preferences
 import android.content.Context
 import android.net.Uri
 import android.util.Xml
+import app.marlboroadvance.mpvex.BuildConfig
 import app.marlboroadvance.mpvex.database.MpvExDatabase
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkProtocol
@@ -85,6 +86,7 @@ class SettingsManager(
       ATTR_EXPORT_DATE,
       SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
     )
+    serializer.attribute(null, ATTR_VERSION, BuildConfig.VERSION_NAME)
 
     var exportedCount = 0
     val exportedKeys = mutableListOf<String>()
@@ -160,7 +162,17 @@ class SettingsManager(
           serializer.attribute(null, ATTR_TYPE, TYPE_STRING_SET)
           // Encode string set by joining with separator
           serializer.attribute(null, ATTR_VALUE, stringSet.joinToString(STRING_SET_SEPARATOR))
+        } else {
+          // Unexpected element type — keep the data instead of writing an empty node.
+          serializer.attribute(null, ATTR_TYPE, TYPE_STRING)
+          serializer.attribute(null, ATTR_VALUE, value.joinToString(STRING_SET_SEPARATOR))
         }
+      }
+
+      else -> {
+        // Future-proofing: any new preference type is preserved as text rather than dropped.
+        serializer.attribute(null, ATTR_TYPE, TYPE_STRING)
+        serializer.attribute(null, ATTR_VALUE, value.toString())
       }
     }
 

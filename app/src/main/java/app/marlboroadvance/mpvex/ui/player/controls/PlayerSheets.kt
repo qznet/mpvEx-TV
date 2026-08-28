@@ -20,6 +20,7 @@ import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.FrameNavig
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.MoreSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.PlaybackSpeedSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.PlaylistSheet
+import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.SkipIntroOutroSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.EnhancedSubtitlesSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.OnlineSubtitleSearchSheet
 import app.marlboroadvance.mpvex.ui.player.controls.components.sheets.VideoZoomSheet
@@ -338,6 +339,14 @@ fun PlayerSheets(
       )
     }
 
+
+    Sheets.SkipIntroOutro -> {
+      val playerPreferences = koinInject<app.marlboroadvance.mpvex.preferences.PlayerPreferences>()
+      SkipIntroOutroSheet(
+        playerPreferences = playerPreferences,
+        onDismissRequest = onDismissRequest,
+      )
+    }
 
     Sheets.Playlist -> {
       // Refresh playlist items when sheet is shown

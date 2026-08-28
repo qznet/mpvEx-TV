@@ -242,6 +242,8 @@ object AdvancedPreferencesScreen : Screen {
             }
           }
         val mpvConfStorageLocation by preferences.mpvConfStorageUri.collectAsState()
+        val defaultMpvPath by preferences.mpvConfStoragePath.collectAsState()
+        val defaultScriptsPath by preferences.mpvScriptsDir.collectAsState()
         LazyColumn(
           modifier = Modifier
             .fillMaxSize()
@@ -369,12 +371,14 @@ object AdvancedPreferencesScreen : Screen {
               TwoTargetIconButtonPreference(
                 title = { Text(stringResource(R.string.pref_advanced_mpv_conf_storage_location)) },
                 summary = {
-                  if (mpvConfStorageLocation.isNotBlank()) {
-                    Text(
-                      getSimplifiedPathFromUri(mpvConfStorageLocation),
-                      color = MaterialTheme.colorScheme.outline,
-                    )
-                  }
+                  Text(
+                    if (mpvConfStorageLocation.isNotBlank()) {
+                      getSimplifiedPathFromUri(mpvConfStorageLocation)
+                    } else {
+                      "默认: $defaultMpvPath"
+                    },
+                    color = MaterialTheme.colorScheme.outline,
+                  )
                 },
                 onClick = { locationPicker.launch(null) },
                 iconButtonIcon = { 
@@ -437,6 +441,25 @@ object AdvancedPreferencesScreen : Screen {
           }
           
           // Scripts Section
+          item {
+            PreferenceSectionHeader(title = "Scripts")
+          }
+
+          item {
+            PreferenceCard {
+              Preference(
+                title = { Text(text = "脚本目录") },
+                summary = {
+                  Text(
+                    text = defaultScriptsPath,
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onClick = {},
+              )
+            }
+          }
+
           // History Section
           item {
             PreferenceSectionHeader(title = "History")

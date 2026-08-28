@@ -635,10 +635,10 @@ fun RenderPlayerButton(
     }
 
     PlayerButton.CUSTOM_SKIP -> {
-      val playerPreferences = org.koin.compose.koinInject<app.marlboroadvance.mpvex.preferences.PlayerPreferences>()
+      // Opens the skip intro/outro settings dialog instead of blind-seeking forward.
       ControlsButton(
         icon = Icons.Default.FastForward,
-        onClick = { viewModel.seekBy(playerPreferences.customSkipDuration.get()) },
+        onClick = { onOpenSheet(Sheets.SkipIntroOutro) },
         color = if (hideBackground) controlColor else MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.size(buttonSize),
       )

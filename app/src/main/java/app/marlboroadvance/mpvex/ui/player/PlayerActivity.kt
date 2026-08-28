@@ -35,7 +35,9 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import app.marlboroadvance.mpvex.database.entities.NetworkTrackProfileEntity
 import app.marlboroadvance.mpvex.database.entities.PlaybackStateEntity
 import app.marlboroadvance.mpvex.database.repository.NetworkTrackProfileRepository
@@ -61,6 +63,7 @@ import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -201,6 +204,19 @@ class PlayerActivity :
   // resetting the timeline to 0, which made resume-from-position never take effect.
   private var pendingResumeSeek: Int? = null
   private var resumeSeekApplied = false
+
+  // ==================== Auto skip intro / outro ====================
+  // All three are per-file and reset in handleFileLoaded(), so every episode is evaluated
+  // exactly once at the start (intro) and once after the 95% mark (outro).
+
+  /** Intro length to apply to the file currently loading, or null when it should not skip. */
+  private var pendingIntroSkipSeconds: Int? = null
+
+  /** Set once the intro check has run for this file; prevents re-skipping on later seeks. */
+  private var introSkipApplied = false
+
+  /** Set once the outro has triggered (or been ruled out) for this file. */
+  private var outroSkipTriggered = false
 
   /**
    * Playlist of URIs for sequential playback
@@ -992,6 +1008,9 @@ class PlayerActivity :
     mpvInitialized = true
     Log.d(TAG, "MPV initialized")
 
+    // Watch progress so a configured outro window can auto-advance to the next episode.
+    startOutroSkipMonitor()
+
     // Wire up the OSD surface for vo=mediacodec_embed (separate SurfaceView that
     // mpv renders subtitles/OSC to, while MediaCodec renders video to the main surface)
     binding.osdSurface?.let { osdSurface ->
@@ -1025,11 +1044,14 @@ class PlayerActivity :
       Log.d(TAG, "Syncing from user MPV directory: ${tree.uri}")
       syncConfigFiles(tree)
       syncFonts(tree)
+      syncScriptsFromTree(tree)
       Log.d(TAG, "Full MPV directory sync completed")
     } else {
-      // Fallback: use preferences-based config (no user directory set)
-      Log.d(TAG, "No MPV directory configured, using preferences fallback")
+      // Fallback: read the default on-device directory, then the preferences copy.
+      Log.d(TAG, "No MPV directory configured, syncing from default path")
       copyMPVConfigFromPreferences()
+      syncConfigFromDefaultPath()
+      syncScriptsFromDefaultPath()
     }
   }
 
@@ -1133,6 +1155,108 @@ class PlayerActivity :
   }
 
   // ==================== Helpers ====================
+
+  // ==================== Scripts Sync ====================
+
+  /** Script extensions mpv auto-loads from `<config-dir>/scripts`. */
+  private val scriptExtensions = setOf("lua", "js")
+
+  /**
+   * Copies Lua/JS scripts from the user's MPV directory into mpv's config-dir/scripts so
+   * mpv picks them up automatically. Prefers a `scripts` subfolder (case-insensitive) and
+   * falls back to the directory root.
+   */
+  private fun syncScriptsFromTree(tree: DocumentFile) {
+    val sourceDir = findSubdirCaseInsensitive(tree, "scripts") ?: tree
+    val targetDir = File(filesDir, "scripts").apply { mkdirs() }
+    var count = 0
+
+    sourceDir.listFiles().forEach { file ->
+      if (!file.isFile) return@forEach
+      val name = file.name ?: return@forEach
+      val ext = name.substringAfterLast('.', "").lowercase()
+      if (ext !in scriptExtensions) return@forEach
+
+      runCatching {
+        contentResolver.openInputStream(file.uri)?.use { input ->
+          File(targetDir, name).outputStream().use { output -> input.copyTo(output) }
+          count++
+        }
+      }.onFailure { e ->
+        Log.e(TAG, "Error syncing script: $name", e)
+      }
+    }
+
+    Log.d(TAG, "Scripts sync (SAF): $count file(s)")
+  }
+
+  /**
+   * Copies Lua/JS scripts straight from the configured default scripts directory
+   * (defaults to `/storage/emulated/0/mpv/scripts/`) into mpv's config-dir/scripts.
+   */
+  private fun syncScriptsFromDefaultPath() {
+    val dirPath =
+      advancedPreferences.mpvScriptsDir.get().ifBlank { "/storage/emulated/0/mpv/scripts/" }
+    val sourceDir = File(dirPath)
+    if (!sourceDir.isDirectory) {
+      Log.d(TAG, "Default scripts directory not available: $dirPath")
+      return
+    }
+    syncScriptsFromDirectory(sourceDir)
+  }
+
+  /** Copies every Lua/JS script in [sourceDir] into mpv's config-dir/scripts. */
+  private fun syncScriptsFromDirectory(sourceDir: File) {
+    val targetDir = File(filesDir, "scripts").apply { mkdirs() }
+    val scripts =
+      sourceDir.listFiles { f -> f.isFile && f.extension.lowercase() in scriptExtensions }
+    if (scripts.isNullOrEmpty()) {
+      Log.d(TAG, "No scripts found in ${sourceDir.path}")
+      return
+    }
+
+    var count = 0
+    scripts.forEach { script ->
+      runCatching {
+        script.copyTo(File(targetDir, script.name), overwrite = true)
+        count++
+      }.onFailure { e ->
+        Log.e(TAG, "Error copying script: ${script.name}", e)
+      }
+    }
+    Log.d(TAG, "Scripts sync (path): $count file(s) from ${sourceDir.path}")
+  }
+
+  /**
+   * Reads mpv.conf / input.conf from the default on-device directory so a plain path works
+   * even when the user has not granted a SAF folder.
+   */
+  private fun syncConfigFromDefaultPath() {
+    val dirPath =
+      advancedPreferences.mpvConfStoragePath.get().ifBlank { "/storage/emulated/0/mpv/" }
+    val sourceDir = File(dirPath)
+    if (!sourceDir.isDirectory) {
+      Log.d(TAG, "Default MPV directory not available: $dirPath")
+      return
+    }
+
+    for (configName in listOf("mpv.conf", "input.conf")) {
+      runCatching {
+        val source = File(sourceDir, configName)
+        if (!source.isFile) return@runCatching
+        val content = source.readText()
+        if (content.isBlank()) return@runCatching
+        File(filesDir, configName).writeText(content)
+        when (configName) {
+          "mpv.conf" -> advancedPreferences.mpvConf.set(content)
+          "input.conf" -> advancedPreferences.inputConf.set(content)
+        }
+        Log.d(TAG, "Synced $configName from default path (${content.length} chars)")
+      }.onFailure { e ->
+        Log.e(TAG, "Error syncing $configName from default path", e)
+      }
+    }
+  }
 
   /**
    * Fallback: copies config from preferences when no user MPV directory is set.
@@ -1815,8 +1939,134 @@ class PlayerActivity :
             }
           } ?: run { resumeSeekApplied = true }
         }
+
+        // Auto skip intro — evaluated exactly once per file, and only after any resume
+        // seek has settled (resumeSeekApplied), so a "resume at 20:00" is never yanked
+        // back to the intro boundary.
+        if (resumeSeekApplied && !introSkipApplied) {
+          pendingIntroSkipSeconds?.let { introSec ->
+            val cur = MPVLib.getPropertyInt("time-pos") ?: 0
+            if (cur <= introSec) {
+              Log.d(TAG, "Skip intro: jumping from ${cur}s to ${introSec}s")
+              MPVLib.setPropertyInt("time-pos", introSec)
+            }
+            introSkipApplied = true
+          } ?: run { introSkipApplied = true }
+        }
       }
     }
+  }
+
+  // ==================== Auto skip intro / outro helpers ====================
+
+  /**
+   * Watches playback progress so the outro can be skipped once the episode is effectively
+   * over. Only reacts after 95% of the duration has played.
+   */
+  private fun startOutroSkipMonitor() {
+    lifecycleScope.launch {
+      repeatOnLifecycle(Lifecycle.State.RESUMED) {
+        combine(
+          MPVLib.propInt["time-pos"],
+          MPVLib.propInt["duration"],
+        ) { pos, duration -> pos to duration }
+          .collect { (pos, duration) -> checkOutroSkip(pos, duration) }
+      }
+    }
+  }
+
+  /**
+   * Advances to the next episode when the remaining time falls inside the configured outro
+   * window. Runs on every progress update; [outroSkipTriggered] makes it fire once per file.
+   */
+  private fun checkOutroSkip(pos: Int?, duration: Int?) {
+    if (outroSkipTriggered) return
+    if (!playerPreferences.skipIntroOutroEnabled.get()) return
+
+    val current = pos ?: return
+    val total = duration ?: return
+    if (total <= 0 || current <= 0) return
+
+    // Only start looking once 95% of the episode has played.
+    if (current.toDouble() < total * 0.95) return
+
+    val outroSeconds = playerPreferences.skipOutroSeconds.get()
+    val remaining = total - current
+    if (remaining > outroSeconds) return
+
+    // Mark handled first so we never double-advance while the next file loads.
+    outroSkipTriggered = true
+
+    if (isCurrentMediaInSourceRoot()) {
+      Log.d(TAG, "Skip outro: disabled, media sits directly in the source root")
+      return
+    }
+    if (!hasNext()) {
+      Log.d(TAG, "Skip outro: no next episode in playlist, letting playback end normally")
+      return
+    }
+
+    Log.d(TAG, "Skip outro: ${remaining}s left (<= ${outroSeconds}s), advancing to next episode")
+    playNext()
+  }
+
+  /**
+   * Intro length in seconds to apply to the file currently loading, or null when auto skip
+   * is off or does not apply to this file.
+   */
+  private fun introSkipSecondsForCurrentFile(): Int? {
+    if (!playerPreferences.skipIntroOutroEnabled.get()) return null
+    if (isCurrentMediaInSourceRoot()) {
+      Log.d(TAG, "Skip intro/outro: disabled, media sits directly in the source root")
+      return null
+    }
+    return playerPreferences.skipIntroSeconds.get().coerceAtLeast(1)
+  }
+
+  /**
+   * True when the media sits directly in the root of its source — the storage root for local
+   * files, or the share base directory for SMB/WebDAV/FTP. Root-level files are typically
+   * standalone movies, so auto skipping is turned off for them.
+   */
+  private fun isCurrentMediaInSourceRoot(): Boolean {
+    val currentUri = playlist.getOrNull(playlistIndex) ?: intent.data
+    val networkFilePath =
+      currentUri?.let { playlistNetworkFilePaths[it] }
+        ?: intent.getStringExtra("network_file_path")
+    val networkConnectionId = intent.getLongExtra("network_connection_id", -1L)
+
+    // Network playback: compare the file's parent with the share base directory.
+    if (!networkFilePath.isNullOrBlank() && networkConnectionId != -1L) {
+      val base = viewModel.networkBaseDir
+      if (base.isNullOrBlank()) return false
+      val parent = networkFilePath.substringBeforeLast('/', "")
+      return parent.isBlank() || parent.trimEnd('/').equals(base.trimEnd('/'), ignoreCase = true)
+    }
+
+    // Local playback: compare the parent directory against the storage roots.
+    val path = currentUri?.resolveUri(this) ?: parsePathFromIntent(intent)
+    if (path.isNullOrBlank()) return false
+    val parent = File(path).parent ?: return false
+    return isStorageRoot(parent)
+  }
+
+  /** True when [path] is a top-level storage root (internal storage, SD card, USB drive). */
+  private fun isStorageRoot(path: String): Boolean {
+    val normalized = path.trimEnd('/')
+    if (normalized.isBlank()) return false
+    if (
+      normalized.equals("/storage/emulated/0", ignoreCase = true) ||
+      normalized.equals("/sdcard", ignoreCase = true) ||
+      normalized.equals("/mnt/sdcard", ignoreCase = true)
+    ) {
+      return true
+    }
+    val externalRoot =
+      android.os.Environment.getExternalStorageDirectory()?.absolutePath?.trimEnd('/')
+    if (externalRoot != null && normalized.equals(externalRoot, ignoreCase = true)) return true
+    // /storage/<volume-id> for removable SD cards and USB drives.
+    val segments = normalized.trim('/').split('/')
+    return segments.size == 2 && segments[0].equals("storage", ignoreCase = true)
   }
 
   /**
@@ -1828,6 +2078,11 @@ class PlayerActivity :
     // Clear any deferred resume target from the previous file before loading new state.
     pendingResumeSeek = null
     resumeSeekApplied = false
+
+    // Reset auto skip intro/outro for this file and decide whether it applies here.
+    introSkipApplied = false
+    outroSkipTriggered = false
+    pendingIntroSkipSeconds = introSkipSecondsForCurrentFile()
 
     // Extract fileName from intent only if not already set
     // This preserves fileName set in onNewIntent or onCreate

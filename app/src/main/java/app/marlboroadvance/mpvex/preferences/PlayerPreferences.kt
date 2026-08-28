@@ -61,6 +61,23 @@ class PlayerPreferences(
 
   val customSkipDuration = preferenceStore.getInt("custom_skip_duration", 90)
 
+  // ==================== Auto skip intro / outro (TV series) ====================
+
+  /** Master switch for automatically skipping a TV episode's intro and outro. */
+  val skipIntroOutroEnabled = preferenceStore.getBoolean("skip_intro_outro_enabled", false)
+
+  /**
+   * Intro length in seconds. When playback of a file starts at a position at or before
+   * this many seconds, playback jumps straight to this position.
+   */
+  val skipIntroSeconds = preferenceStore.getInt("skip_intro_seconds", 60)
+
+  /**
+   * Outro length in seconds. Once playback passes 95% of the duration and the remaining
+   * time is within this window, the player advances to the next episode.
+   */
+  val skipOutroSeconds = preferenceStore.getInt("skip_outro_seconds", 60)
+
   /**
    * User-defined mpv command buttons shown on the player overlay.
    * Default: a single "片头" button that seeks to 90 seconds.
