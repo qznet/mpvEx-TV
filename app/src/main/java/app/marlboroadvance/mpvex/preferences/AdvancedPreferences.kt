@@ -37,4 +37,12 @@ class AdvancedPreferences(
 
   val enableRecentlyPlayed = preferenceStore.getBoolean("enable_recently_played", true)
 
+  /** Master switch for the Lua/JS script feature. When off no script is loaded at all. */
+  val enableLuaScripts = preferenceStore.getBoolean("enable_lua_scripts", false)
+
+  /**
+   * Names of the scripts the user has ticked in the script manager. Only these are synced
+   * into mpv's `<config-dir>/scripts`, so mpv loads exactly what the user selected.
+   */
+  val selectedLuaScripts = preferenceStore.getStringSet("selected_lua_scripts", emptySet())
 }

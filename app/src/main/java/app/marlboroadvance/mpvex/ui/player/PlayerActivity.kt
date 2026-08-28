@@ -51,6 +51,7 @@ import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import app.marlboroadvance.mpvex.preferences.SubtitlesPreferences
 import app.marlboroadvance.mpvex.ui.player.controls.PlayerControls
 import app.marlboroadvance.mpvex.ui.theme.MpvexTheme
+import app.marlboroadvance.mpvex.utils.ScriptRepository
 import app.marlboroadvance.mpvex.utils.history.RecentlyPlayedOps
 import app.marlboroadvance.mpvex.utils.media.HttpUtils
 import app.marlboroadvance.mpvex.utils.media.NetworkMediaIdUtils
@@ -1011,6 +1012,9 @@ class PlayerActivity :
     // Watch progress so a configured outro window can auto-advance to the next episode.
     startOutroSkipMonitor()
 
+    // Let a script ticked mid-playback load immediately, without restarting the video.
+    observeScriptSelection()
+
     // Wire up the OSD surface for vo=mediacodec_embed (separate SurfaceView that
     // mpv renders subtitles/OSC to, while MediaCodec renders video to the main surface)
     binding.osdSurface?.let { osdSurface ->
@@ -1162,13 +1166,83 @@ class PlayerActivity :
   private val scriptExtensions = setOf("lua", "js")
 
   /**
-   * Copies Lua/JS scripts from the user's MPV directory into mpv's config-dir/scripts so
-   * mpv picks them up automatically. Prefers a `scripts` subfolder (case-insensitive) and
-   * falls back to the directory root.
+   * Names of the scripts mpv should load: the user's selection, or nothing at all when the
+   * script feature is switched off.
+   */
+  private fun enabledScriptNames(): Set<String> =
+    if (advancedPreferences.enableLuaScripts.get()) {
+      advancedPreferences.selectedLuaScripts.get()
+    } else {
+      emptySet()
+    }
+
+  /**
+   * Watches the script selection so a script ticked during playback is loaded straight away
+   * instead of only showing up after the next restart.
+   */
+  private fun observeScriptSelection() {
+    lifecycleScope.launch {
+      var previous = advancedPreferences.selectedLuaScripts.get()
+      advancedPreferences.selectedLuaScripts.changes().collect { current ->
+        val added = current - previous
+        previous = current
+        if (added.isEmpty() || !advancedPreferences.enableLuaScripts.get()) return@collect
+        added.forEach { loadScriptAtRuntime(it) }
+      }
+    }
+  }
+
+  /**
+   * Copies [scriptName] into mpv's config-dir/scripts and tells the running mpv instance to
+   * load it now.
+   */
+  private fun loadScriptAtRuntime(scriptName: String) {
+    if (!mpvInitialized || isFinishing) return
+
+    lifecycleScope.launch(Dispatchers.IO) {
+      val target: File? =
+        runCatching {
+          val targetDir = File(filesDir, "scripts").apply { mkdirs() }
+          ScriptRepository.readScript(this@PlayerActivity, advancedPreferences, scriptName)
+            ?.let { content -> File(targetDir, scriptName).writeText(content) }
+          File(targetDir, scriptName).takeIf { it.isFile }
+        }.getOrNull()
+
+      if (target == null) {
+        Log.w(TAG, "Runtime script load: could not read $scriptName")
+        return@launch
+      }
+
+      withContext(Dispatchers.Main) {
+        runCatching {
+          MPVLib.command("load-script", target.absolutePath)
+          Log.d(TAG, "Loaded script at runtime: $scriptName")
+        }.onFailure { e ->
+          Log.e(TAG, "Error loading script at runtime: $scriptName", e)
+        }
+      }
+    }
+  }
+
+  /**
+   * Copies the enabled Lua/JS scripts from the user's MPV directory into mpv's
+   * config-dir/scripts so mpv picks them up automatically. Prefers a `scripts` subfolder
+   * (case-insensitive) and falls back to the directory root.
+   *
+   * The target directory is wiped first — mpv loads *everything* it finds there, so a
+   * de-selected script has to be removed, not just left behind.
    */
   private fun syncScriptsFromTree(tree: DocumentFile) {
-    val sourceDir = findSubdirCaseInsensitive(tree, "scripts") ?: tree
     val targetDir = File(filesDir, "scripts").apply { mkdirs() }
+    targetDir.listFiles()?.forEach { it.delete() }
+
+    val selected = enabledScriptNames()
+    if (selected.isEmpty()) {
+      Log.d(TAG, "Scripts sync (SAF): no scripts selected")
+      return
+    }
+
+    val sourceDir = findSubdirCaseInsensitive(tree, "scripts") ?: tree
     var count = 0
 
     sourceDir.listFiles().forEach { file ->
@@ -1176,6 +1250,7 @@ class PlayerActivity :
       val name = file.name ?: return@forEach
       val ext = name.substringAfterLast('.', "").lowercase()
       if (ext !in scriptExtensions) return@forEach
+      if (!selected.contains(name)) return@forEach
 
       runCatching {
         contentResolver.openInputStream(file.uri)?.use { input ->
@@ -1205,9 +1280,17 @@ class PlayerActivity :
     syncScriptsFromDirectory(sourceDir)
   }
 
-  /** Copies every Lua/JS script in [sourceDir] into mpv's config-dir/scripts. */
+  /** Copies the enabled Lua/JS scripts from [sourceDir] into mpv's config-dir/scripts. */
   private fun syncScriptsFromDirectory(sourceDir: File) {
     val targetDir = File(filesDir, "scripts").apply { mkdirs() }
+    targetDir.listFiles()?.forEach { it.delete() }
+
+    val selected = enabledScriptNames()
+    if (selected.isEmpty()) {
+      Log.d(TAG, "Scripts sync (path): no scripts selected")
+      return
+    }
+
     val scripts =
       sourceDir.listFiles { f -> f.isFile && f.extension.lowercase() in scriptExtensions }
     if (scripts.isNullOrEmpty()) {
@@ -1217,6 +1300,7 @@ class PlayerActivity :
 
     var count = 0
     scripts.forEach { script ->
+      if (!selected.contains(script.name)) return@forEach
       runCatching {
         script.copyTo(File(targetDir, script.name), overwrite = true)
         count++

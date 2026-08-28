@@ -447,6 +447,42 @@ object AdvancedPreferencesScreen : Screen {
 
           item {
             PreferenceCard {
+              val enableLuaScripts by preferences.enableLuaScripts.collectAsState()
+              val selectedScripts by preferences.selectedLuaScripts.collectAsState()
+
+              SwitchPreference(
+                value = enableLuaScripts,
+                onValueChange = preferences.enableLuaScripts::set,
+                title = { Text(text = "启用 Lua 脚本") },
+                summary = {
+                  Text(
+                    text = "开启后，脚本目录中已勾选的脚本会在播放时加载",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
+
+              PreferenceDivider()
+
+              Preference(
+                title = { Text(text = "管理脚本") },
+                summary = {
+                  Text(
+                    text =
+                      when {
+                        !enableLuaScripts -> "请先启用 Lua 脚本"
+                        selectedScripts.isEmpty() -> "未启用任何脚本"
+                        else -> "已启用 ${selectedScripts.size} 个脚本"
+                      },
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onClick = { backStack.add(LuaScriptsScreen) },
+                enabled = enableLuaScripts,
+              )
+
+              PreferenceDivider()
+
               Preference(
                 title = { Text(text = "脚本目录") },
                 summary = {
