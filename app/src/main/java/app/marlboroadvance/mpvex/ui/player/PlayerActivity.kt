@@ -1968,7 +1968,7 @@ class PlayerActivity :
   private fun startOutroSkipMonitor() {
     lifecycleScope.launch {
       repeatOnLifecycle(Lifecycle.State.RESUMED) {
-        while (isActive) {
+        while (true) {
           delay(1000)
           if (outroSkipTriggered) continue
           val pos = MPVLib.getPropertyInt("time-pos")
