@@ -118,10 +118,35 @@ if [ ! -d libbluray ]; then
 fi
 
 # libiconv
+# ftp.gnu.org is frequently unreachable from CI runners (run 33174067288 failed
+# because https://ftp.gnu.org/pub/gnu/libiconv/... was unreachable for all 10
+# wget retries). Fall back across several GNU mirrors so a single mirror outage
+# doesn't break the entire native build.
 if [ ! -d libiconv ]; then
 	mkdir libiconv
-	$WGET https://ftp.gnu.org/pub/gnu/libiconv/libiconv-${v_libiconv}.tar.gz -O - | \
-		tar -xz -C libiconv --strip-components=1
+	libiconv_ok=0
+	# Lighter wget for the fallback loop: fail over to the next mirror fast
+	# instead of burning wget's full --tries=10 on one dead host.
+	LIBICONV_WGET="wget --progress=bar:force --tries=3 --timeout=30 --waitretry=5 --retry-connrefused --retry-on-http-error=503,504"
+	for u in \
+		"https://ftpmirror.gnu.org/libiconv/libiconv-${v_libiconv}.tar.gz" \
+		"https://mirrors.kernel.org/gnu/libiconv/libiconv-${v_libiconv}.tar.gz" \
+		"https://ftp.gnu.org/pub/gnu/libiconv/libiconv-${v_libiconv}.tar.gz"
+	do
+		echo "  downloading libiconv from $u"
+		if $LIBICONV_WGET "$u" -O - 2>/dev/null | tar -xz -C libiconv --strip-components=1; then
+			if [ -f libiconv/configure ]; then
+				libiconv_ok=1
+				break
+			fi
+		fi
+		echo "[warn] libiconv download/extract from $u failed; trying next mirror..."
+		rm -rf libiconv && mkdir libiconv
+	done
+	if [ "$libiconv_ok" -ne 1 ]; then
+		echo "::error::failed to download libiconv from all mirrors" >&2
+		exit 1
+	fi
 fi
 
 # uchardet
