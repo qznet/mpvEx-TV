@@ -66,6 +66,8 @@ import `is`.xyz.mpv.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -211,11 +213,15 @@ class PlayerActivity :
   // All three are per-file and reset in handleFileLoaded(), so every episode is evaluated
   // exactly once at the start (intro) and once after the 95% mark (outro).
 
-  /** Intro length to apply to the file currently loading, or null when it should not skip. */
-  private var pendingIntroSkipSeconds: Int? = null
-
   /** Set once the intro check has run for this file; prevents re-skipping on later seeks. */
   private var introSkipApplied = false
+
+  /**
+   * Media identifier of the file the intro was last evaluated for. Used to re-arm the
+   * once-per-file intro guard when a *new* file starts, so the intro is re-evaluated for
+   * every episode (including auto-played ones) even if the FILE_LOADED reset is missed.
+   */
+  private var lastIntroSkipMediaId = ""
 
   /** Set once the outro has triggered (or been ruled out) for this file. */
   private var outroSkipTriggered = false
@@ -2030,19 +2036,30 @@ class PlayerActivity :
           } ?: run { resumeSeekApplied = true }
         }
 
-        // Auto skip intro — evaluated exactly once per file, independent of any
-        // deferred resume-seek. The per-file decision (whether this file should skip)
-        // was already made in handleFileLoaded(), so this runs for every episode,
-        // including auto-played ones that carry a resume position.
+        // Auto skip intro — runs once per file at the first (re)start. Decoupled from the
+        // resume system: it only triggers when playback is genuinely fresh (no deferred
+        // resume-seek is pending) AND the playhead is still inside the intro window
+        // (time-pos <= introSeconds). This makes EVERY episode skip its intro, including
+        // auto-played ones, while a real resume (parked past the intro) is left untouched.
+        // Re-arm the once-per-file guard whenever the media changes, so a missed
+        // FILE_LOADED reset can never leave the guard stuck from the previous episode.
+        if (mediaIdentifier != lastIntroSkipMediaId) {
+          introSkipApplied = false
+          lastIntroSkipMediaId = mediaIdentifier
+        }
         if (!introSkipApplied) {
-          pendingIntroSkipSeconds?.let { introSec ->
+          introSkipApplied = true
+          if (playerPreferences.skipIntroOutroEnabled.get()
+            && !isCurrentMediaInSourceRoot()
+            && pendingResumeSeek == null
+          ) {
+            val introSec = playerPreferences.skipIntroSeconds.get().coerceAtLeast(1)
             val cur = MPVLib.getPropertyInt("time-pos") ?: 0
             if (cur <= introSec) {
               Log.d(TAG, "Skip intro: jumping from ${cur}s to ${introSec}s")
               MPVLib.setPropertyInt("time-pos", introSec)
             }
           }
-          introSkipApplied = true
         }
       }
     }
@@ -2052,19 +2069,19 @@ class PlayerActivity :
 
   /**
    * Watches playback progress so the outro can be skipped once the remaining time falls
-   * inside the configured window. Polls once per second (robust regardless of property
-   * flow timing) and only ever advances once per file via [outroSkipTriggered].
+   * inside the configured window. Reacts to mpv's own [MPVLib.propInt] time-pos/duration
+   * StateFlows (more reliable than polling getPropertyInt, which can momentarily report a
+   * 0 duration and silently disable the check). Only ever advances once per file via
+   * [outroSkipTriggered].
    */
   private fun startOutroSkipMonitor() {
     lifecycleScope.launch {
       repeatOnLifecycle(Lifecycle.State.RESUMED) {
-        while (true) {
-          delay(1000)
-          if (outroSkipTriggered) continue
-          val pos = MPVLib.getPropertyInt("time-pos")
-          val duration = MPVLib.getPropertyInt("duration")
-          checkOutroSkip(pos, duration)
-        }
+        combine(
+          MPVLib.propInt["time-pos"],
+          MPVLib.propInt["duration"],
+        ) { pos, duration -> Pair(pos, duration) }
+          .collect { (pos, duration) -> checkOutroSkip(pos, duration) }
       }
     }
   }
@@ -2104,27 +2121,6 @@ class PlayerActivity :
 
     Log.d(TAG, "Skip outro: ${remaining}s left (<= ${outroSeconds}s), advancing to next episode")
     playNext()
-  }
-
-  /**
-   * Intro length in seconds to apply to the file currently loading, or null when auto skip
-   * is off, does not apply to this file, or the file is resuming past the intro boundary
-   * (in which case the intro has already played and must not be skipped).
-   *
-   * @param resumePoint saved resume position in seconds, or null for a fresh start.
-   */
-  private fun computeIntroSkipSeconds(resumePoint: Int?): Int? {
-    if (!playerPreferences.skipIntroOutroEnabled.get()) return null
-    if (isCurrentMediaInSourceRoot()) {
-      Log.d(TAG, "Skip intro/outro: disabled, media sits directly in the source root")
-      return null
-    }
-    val introSec = playerPreferences.skipIntroSeconds.get().coerceAtLeast(1)
-    // A resume point past the intro boundary means we're continuing mid-episode; the
-    // intro is already behind us, so don't skip. At/before the boundary we treat the
-    // file as starting fresh and skip the intro.
-    if (resumePoint != null && resumePoint > introSec) return null
-    return introSec
   }
 
   /**
@@ -2183,12 +2179,12 @@ class PlayerActivity :
     pendingResumeSeek = null
     resumeSeekApplied = false
 
-    // Reset per-file auto skip state. pendingIntroSkipSeconds is decided AFTER the
-    // resume position is known (further below), so a mid-episode resume is never
-    // mistaken for a fresh start and has its intro yanked to the boundary.
+    // Reset per-file auto skip state. The intro decision is made live in the
+    // PLAYBACK_RESTART handler (time-based, decoupled from resume), so we only need
+    // to clear the "already applied" flag here; the outro flag is also reset so the
+    // per-second monitor can evaluate this file from scratch.
     introSkipApplied = false
     outroSkipTriggered = false
-    pendingIntroSkipSeconds = null
 
     // Extract fileName from intent only if not already set
     // This preserves fileName set in onNewIntent or onCreate
@@ -2217,11 +2213,6 @@ class PlayerActivity :
         }
       }.getOrNull()
     }
-
-    // Decide intro skip now that the resume position (if any) is known. If the file
-    // resumes from a saved position past the intro boundary, the intro has already
-    // played, so we don't skip it. Otherwise treat it as a fresh start and skip.
-    pendingIntroSkipSeconds = computeIntroSkipSeconds(pendingResumeSeek)
 
     // Start media notification service (like YouTube - always show notification)
     startBackgroundPlayback()
