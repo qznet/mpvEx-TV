@@ -6,7 +6,55 @@ import app.marlboroadvance.mpvex.preferences.preference.getEnum
 import app.marlboroadvance.mpvex.ui.player.PlayerOrientation
 import app.marlboroadvance.mpvex.ui.player.RepeatMode
 import app.marlboroadvance.mpvex.ui.player.VideoAspect
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+
+/** Pre-1.4.0 on-disk format. Kept only to migrate the `custom_buttons` preference. */
+@Serializable
+private data class LegacyCustomButton(
+  val id: String = "",
+  val label: String = "",
+  val command: String = "",
+  val enabled: Boolean = true,
+)
+
+/**
+ * Promote a v1.4.0-style flat list of {label, command} entries into the 8-slot
+ * [CustomButtonSlots] format. Commands are wrapped in `mp.command([==[...]==])` so the
+ * legacy body still works when it's now evaluated as Lua source.
+ */
+private fun migrateLegacyCustomButtons(raw: String): CustomButtonSlots {
+  val legacy = runCatching {
+    kotlinx.serialization.json.Json.decodeFromString<List<LegacyCustomButton>>(raw)
+  }.getOrDefault(emptyList())
+  if (legacy.isEmpty()) return CustomButtonSlots()
+  val slots = MutableList<CustomButton?>(CustomButtonSlots.SLOT_COUNT) { null }
+  legacy.forEachIndexed { i, old ->
+    if (i < slots.size) {
+      slots[i] = CustomButton(
+        id = old.id.ifBlank { "legacy_$i" },
+        title = old.label,
+        content = wrapLegacyCommand(old.command),
+        enabled = old.enabled,
+      )
+    }
+  }
+  return CustomButtonSlots(slots)
+}
+
+private fun wrapLegacyCommand(command: String): String {
+  val trimmed = command.trim()
+  if (trimmed.isBlank()) return ""
+  // If the body already looks like Lua (mp. *, local, require, function), don't wrap.
+  val looksLikeLua =
+    trimmed.startsWith("mp.") ||
+      trimmed.startsWith("local ") ||
+      trimmed.startsWith("require ") ||
+      trimmed.startsWith("function ")
+  if (looksLikeLua) return trimmed
+  // Lua long-string literal — survives arbitrary quotes, newlines, brackets.
+  return "mp.command([==[$trimmed]==])"
+}
 
 class PlayerPreferences(
   preferenceStore: PreferenceStore,
@@ -79,22 +127,22 @@ class PlayerPreferences(
   val skipOutroSeconds = preferenceStore.getInt("skip_outro_seconds", 60)
 
   /**
-   * User-defined mpv command buttons shown on the player overlay.
-   * Default: a single "片头" button that seeks to 90 seconds.
-   * Order in the list defines render order; reordering swaps elements.
+   * User-defined Lua buttons shown on the player overlay. Up to 8 fixed slots (L1..L4, R1..R4).
+   * Older installs persisted a flat `List<CustomButton>`; the deserializer migrates that
+   * legacy format on the fly, wrapping any plain mpv command in `mp.command([==[...]==])`
+   * so it still works when the body is now evaluated as Lua.
    */
   val customButtons = preferenceStore.getObject(
     key = "custom_buttons",
-    defaultValue = listOf(
-      CustomButton(id = "intro", label = "片头", command = "seek 90", enabled = true),
-    ),
+    defaultValue = CustomButtonSlots(),
     serializer = { Json.encodeToString(it) },
     deserializer = { str ->
       if (str.isBlank()) {
-        emptyList()
+        CustomButtonSlots()
       } else {
-        runCatching { Json.decodeFromString<List<CustomButton>>(str) }
-          .getOrDefault(emptyList())
+        // New format first; fall back to the v1.4.0 flat list on decode failure.
+        runCatching { Json.decodeFromString<CustomButtonSlots>(str) }.getOrNull()
+          ?: migrateLegacyCustomButtons(str)
       }
     },
   )

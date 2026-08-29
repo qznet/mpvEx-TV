@@ -1,14 +1,18 @@
 package app.marlboroadvance.mpvex.ui.player.controls.components.sheets
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
@@ -31,7 +35,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -43,14 +46,22 @@ import kotlinx.coroutines.delay
 
 /**
  * Settings dialog for the "skip intro / outro" feature, opened from the Custom Skip player
- * button. Laid out top-to-bottom so a TV remote can walk it with up/down and toggle/enter:
+ * button. Three rows, all remote-friendly:
  *
- * 1. Enable checkbox
- * 2. Intro length in seconds
- * 3. Outro length in seconds
+ * 1. Enable checkbox (own row, focusRequester here)
+ * 2. Intro length in seconds  (label / minus / number field / plus)
+ * 3. Outro length in seconds  (same shape)
  *
  * Values are committed to [PlayerPreferences] as they change, so the running player picks
  * them up on the next file (and the outro check reads them live).
+ *
+ * TV notes:
+ * - Body uses [LazyColumn] (not Column) so the D-Pad can always reach the last row even
+ *   if a row grows tall.
+ * - [BackHandler] closes the dialog on the remote's Back/Return key — without it the sheet
+ *   can only be dismissed by tapping outside, which is impossible with a D-Pad.
+ * - The first focusable child (the enable row) holds the [FocusRequester] so focus lands
+ *   on the toggle instead of being trapped on the [Surface].
  */
 @Composable
 fun SkipIntroOutroSheet(
@@ -61,12 +72,14 @@ fun SkipIntroOutroSheet(
   val introSeconds by playerPreferences.skipIntroSeconds.collectAsState()
   val outroSeconds by playerPreferences.skipOutroSeconds.collectAsState()
 
-  // TV focus: the container itself must not take focus, so the request falls through to the
-  // first focusable child (the enable row).
-  val focusRequester = remember { FocusRequester() }
+  // Remote's Back/Return key dismisses the sheet.
+  BackHandler(onBack = onDismissRequest)
+
+  // Focus lands on the enable row once the dialog has settled.
+  val enableFocusRequester = remember { FocusRequester() }
   LaunchedEffect(Unit) {
-    delay(60)
-    runCatching { focusRequester.requestFocus() }
+    delay(120)
+    runCatching { enableFocusRequester.requestFocus() }
   }
 
   Dialog(onDismissRequest = onDismissRequest) {
@@ -74,70 +87,77 @@ fun SkipIntroOutroSheet(
       shape = RoundedCornerShape(16.dp),
       color = MaterialTheme.colorScheme.surface,
       tonalElevation = 4.dp,
-      modifier =
-        Modifier
-          .fillMaxWidth(0.92f)
-          .focusRequester(focusRequester)
-          .focusProperties { canFocus = false },
+      modifier = Modifier.fillMaxWidth(0.92f),
     ) {
-      Column(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+      LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(bottom = 4.dp),
       ) {
-        Text(
-          text = "跳过片头片尾",
-          style = MaterialTheme.typography.titleLarge,
-          fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-        )
-        Text(
-          text = "开始播放时若处于片头范围内，则跳到片头结束处；播放超过 95% 后进入片尾范围，则自动播放下一集。",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        HorizontalDivider()
-
-        // 1. Enable
-        Row(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .clip(RoundedCornerShape(12.dp))
-              .clickable { playerPreferences.skipIntroOutroEnabled.set(!enabled) }
-              .padding(vertical = 6.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Checkbox(checked = enabled, onCheckedChange = null)
-          Spacer(Modifier.width(10.dp))
+        item {
           Text(
-            text = "启用",
-            style = MaterialTheme.typography.titleMedium,
+            text = "跳过片头片尾",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+          )
+        }
+        item {
+          Text(
+            text = "开始播放时若处于片头范围内，则跳到片头结束处；播到片尾范围内则自动播放下一集。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
         }
 
+        item { HorizontalDivider() }
+
+        // 1. Enable
+        item {
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .focusRequester(enableFocusRequester)
+                .clickable { playerPreferences.skipIntroOutroEnabled.set(!enabled) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Checkbox(checked = enabled, onCheckedChange = null)
+            Spacer(Modifier.width(10.dp))
+            Text(
+              text = "启用",
+              style = MaterialTheme.typography.titleMedium,
+            )
+          }
+        }
+
         // 2. Intro seconds
-        SecondsRow(
-          label = "片头秒数",
-          value = introSeconds,
-          onValueChange = { playerPreferences.skipIntroSeconds.set(it) },
-        )
+        item {
+          SecondsRow(
+            label = "片头秒数",
+            value = introSeconds,
+            onValueChange = { playerPreferences.skipIntroSeconds.set(it) },
+          )
+        }
 
         // 3. Outro seconds
-        SecondsRow(
-          label = "片尾秒数",
-          value = outroSeconds,
-          onValueChange = { playerPreferences.skipOutroSeconds.set(it) },
-        )
+        item {
+          SecondsRow(
+            label = "片尾秒数",
+            value = outroSeconds,
+            onValueChange = { playerPreferences.skipOutroSeconds.set(it) },
+          )
+        }
 
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.End,
-        ) {
-          TextButton(onClick = onDismissRequest) {
-            Text("关闭")
+        item {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+          ) {
+            TextButton(onClick = onDismissRequest) {
+              Text("关闭")
+            }
           }
         }
       }
@@ -147,7 +167,7 @@ fun SkipIntroOutroSheet(
 
 /**
  * One numeric setting row: label, decrement button, editable value, increment button.
- * The stepper buttons keep the row fully usable with a D-pad even when no IME is available;
+ * The stepper buttons keep the row fully usable with a D-Pad even when no IME is available;
  * the text field allows typing an exact value.
  */
 @Composable
@@ -179,10 +199,7 @@ private fun SecondsRow(
         digits.toIntOrNull()?.let { onValueChange(it.coerceIn(0, 3600)) }
       },
       singleLine = true,
-      keyboardOptions =
-        androidx.compose.foundation.text.KeyboardOptions(
-          keyboardType = KeyboardType.Number,
-        ),
+      keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
       textStyle =
         MaterialTheme.typography.bodyMedium.copy(
           textAlign = TextAlign.Center,

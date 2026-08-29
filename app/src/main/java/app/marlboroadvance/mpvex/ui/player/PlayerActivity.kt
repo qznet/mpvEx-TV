@@ -46,6 +46,7 @@ import app.marlboroadvance.mpvex.domain.playbackstate.repository.PlaybackStateRe
 import app.marlboroadvance.mpvex.preferences.AdvancedPreferences
 import app.marlboroadvance.mpvex.preferences.AudioPreferences
 import app.marlboroadvance.mpvex.preferences.BrowserPreferences
+import app.marlboroadvance.mpvex.preferences.CustomButtonRuntime
 import app.marlboroadvance.mpvex.preferences.DecoderPreferences
 import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import app.marlboroadvance.mpvex.preferences.SubtitlesPreferences
@@ -1008,6 +1009,11 @@ class PlayerActivity :
     player.initialize(filesDir.path, cacheDir.path)
     mpvInitialized = true
     Log.d(TAG, "MPV initialized")
+
+    // Make the app's filesDir the runtime target for custom Lua buttons and run any
+    // startup scripts once mpv is ready to receive script-message commands.
+    CustomButtonRuntime.configDir = filesDir.path
+    CustomButtonRuntime.fireStartups(playerPreferences.customButtons.get().slots.filterNotNull())
 
     // Watch progress so a configured outro window can auto-advance to the next episode.
     startOutroSkipMonitor()

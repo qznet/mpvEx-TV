@@ -23,19 +23,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.marlboroadvance.mpvex.preferences.CustomButton
 import app.marlboroadvance.mpvex.preferences.PlayerPreferences
+import app.marlboroadvance.mpvex.preferences.executeTap
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.ui.theme.controlColor
 import app.marlboroadvance.mpvex.ui.theme.spacing
 import org.koin.compose.koinInject
 
 /**
- * Renders the enabled, order-preserving custom mpv-command buttons as a centered pill row
- * on the player overlay. Each pill shows the button [CustomButton.label] and runs
- * [CustomButton.execute] on click.
- *
- * Placement/sizing notes:
- * - Pill width follows the label (min ~3 CJK chars) so "三个汉字" sized buttons emerge naturally.
- * - Click also resets the controls auto-hide timer via [LocalPlayerButtonsClickEvent].
+ * Renders the enabled, non-empty custom Lua buttons as a centered pill row on the player
+ * overlay. Each pill shows the button [CustomButton.title] and runs [CustomButton.executeTap]
+ * on click. Long-press semantics exist in the data model (`longPressContent`) but are not
+ * wired up on TV — the field is preserved for future parity.
  */
 @Composable
 fun CustomButtonsRow(
@@ -43,8 +41,11 @@ fun CustomButtonsRow(
   hideBackground: Boolean,
 ) {
   val playerPreferences = koinInject<PlayerPreferences>()
-  val buttons by playerPreferences.customButtons.collectAsState()
-  val enabledButtons = buttons.filter { it.enabled }
+  val slots by playerPreferences.customButtons.collectAsState()
+  val enabledButtons =
+    slots.slots
+      .filterNotNull()
+      .filter { it.enabled && it.content.isNotBlank() }
   if (enabledButtons.isEmpty()) return
 
   Row(
@@ -93,11 +94,11 @@ private fun CustomButtonPill(
         .clickable {
           clickEvent()
           haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-          button.execute()
+          button.executeTap()
         },
   ) {
     Text(
-      text = button.label,
+      text = button.title,
       textAlign = TextAlign.Center,
       fontSize = 16.sp,
       maxLines = 1,
