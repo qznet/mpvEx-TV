@@ -2135,12 +2135,27 @@ class PlayerActivity :
         ?: intent.getStringExtra("network_file_path")
     val networkConnectionId = intent.getLongExtra("network_connection_id", -1L)
 
-    // Network playback: compare the file's parent with the share base directory.
+    // Network playback: a file is "in the source root" only when its parent directory
+    // equals the configured share/mount root. IMPORTANT: viewModel.networkBaseDir holds the
+    // *current file's* parent (the series subfolder), NOT the share root — comparing against
+    // it wrongly marked every network episode as root-level and disabled intro/outro skipping
+    // for all SMB/WebDAV/FTP playback. Derive the true share root from the connection config.
     if (!networkFilePath.isNullOrBlank() && networkConnectionId != -1L) {
-      val base = viewModel.networkBaseDir
-      if (base.isNullOrBlank()) return false
-      val parent = networkFilePath.substringBeforeLast('/', "")
-      return parent.isBlank() || parent.trimEnd('/').equals(base.trimEnd('/'), ignoreCase = true)
+      val canonical = NetworkMediaIdUtils.canonicalizeNetworkPath(networkFilePath) ?: return false
+      val fileParent = NetworkMediaIdUtils.parentPath(canonical)
+      val conn = runCatching { networkRepository.getConnectionById(networkConnectionId) }.getOrNull()
+      if (conn != null) {
+        val rawRoot =
+          "${conn.protocol.name.lowercase()}://${conn.host}" +
+            (if (conn.port != -1) ":${conn.port}" else "") +
+            (if (conn.path.startsWith("/")) conn.path else "/${conn.path}")
+        val shareRoot = NetworkMediaIdUtils.canonicalizeNetworkPath(rawRoot)
+        if (shareRoot != null) {
+          return fileParent.trimEnd('/').equals(shareRoot.trimEnd('/'), ignoreCase = true)
+        }
+      }
+      // Without a resolvable share root, never treat the file as root-level (keep skipping on).
+      return false
     }
 
     // Local playback: compare the parent directory against the storage roots.
