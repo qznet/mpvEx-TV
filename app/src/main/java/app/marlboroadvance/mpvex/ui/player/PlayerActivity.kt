@@ -198,6 +198,10 @@ class PlayerActivity :
    * For network streams, this includes a hash of the URI to ensure uniqueness.
    */
   private var mediaIdentifier = ""
+  // Cached share root for the active network connection (e.g. smb://host/share).
+  // Populated asynchronously from the connection config; until it's ready we treat
+  // network media as NOT being in the source root so skipping stays enabled.
+  private var networkShareRoot: String? = null
   // Set when we auto-advance to the next playlist item, so handleFileLoaded can
   // make sure the freshly loaded file actually starts playing (SMB/network streams
   // can otherwise stay paused after loadfile).
@@ -2139,23 +2143,14 @@ class PlayerActivity :
     // equals the configured share/mount root. IMPORTANT: viewModel.networkBaseDir holds the
     // *current file's* parent (the series subfolder), NOT the share root — comparing against
     // it wrongly marked every network episode as root-level and disabled intro/outro skipping
-    // for all SMB/WebDAV/FTP playback. Derive the true share root from the connection config.
+    // for all SMB/WebDAV/FTP playback. The true share root is cached in [networkShareRoot]
+    // (populated asynchronously from the connection config); until it's available we treat
+    // the file as NOT root-level so skipping stays enabled rather than silently disabled.
     if (!networkFilePath.isNullOrBlank() && networkConnectionId != -1L) {
+      val shareRoot = networkShareRoot ?: return false
       val canonical = NetworkMediaIdUtils.canonicalizeNetworkPath(networkFilePath) ?: return false
       val fileParent = NetworkMediaIdUtils.parentPath(canonical)
-      val conn = runCatching { networkRepository.getConnectionById(networkConnectionId) }.getOrNull()
-      if (conn != null) {
-        val rawRoot =
-          "${conn.protocol.name.lowercase()}://${conn.host}" +
-            (if (conn.port != -1) ":${conn.port}" else "") +
-            (if (conn.path.startsWith("/")) conn.path else "/${conn.path}")
-        val shareRoot = NetworkMediaIdUtils.canonicalizeNetworkPath(rawRoot)
-        if (shareRoot != null) {
-          return fileParent.trimEnd('/').equals(shareRoot.trimEnd('/'), ignoreCase = true)
-        }
-      }
-      // Without a resolvable share root, never treat the file as root-level (keep skipping on).
-      return false
+      return fileParent.trimEnd('/').equals(shareRoot.trimEnd('/'), ignoreCase = true)
     }
 
     // Local playback: compare the parent directory against the storage roots.
@@ -2182,6 +2177,30 @@ class PlayerActivity :
     // /storage/<volume-id> for removable SD cards and USB drives.
     val segments = normalized.trim('/').split('/')
     return segments.size == 2 && segments[0].equals("storage", ignoreCase = true)
+  }
+
+  /**
+   * Asynchronously resolves and caches the share/mount root of the active network connection
+   * (e.g. `smb://host/share`) so [isCurrentMediaInSourceRoot] can compare a file's parent
+   * against the REAL share root instead of the current file's parent. Must be called off the
+   * synchronous event path because [NetworkRepository.getConnectionById] is a suspend function.
+   */
+  private fun refreshNetworkShareRoot() {
+    val connectionId = intent.getLongExtra("network_connection_id", -1L)
+    if (connectionId == -1L) {
+      networkShareRoot = null
+      return
+    }
+    lifecycleScope.launch(Dispatchers.IO) {
+      val conn = runCatching { networkRepository.getConnectionById(connectionId) }.getOrNull()
+      networkShareRoot = conn?.let {
+        val rawRoot =
+          "${it.protocol.name.lowercase()}://${it.host}" +
+            (if (it.port != -1) ":${it.port}" else "") +
+            (if (it.path.startsWith("/")) it.path else "/${it.path}")
+        NetworkMediaIdUtils.canonicalizeNetworkPath(rawRoot)
+      }
+    }
   }
 
   /**
@@ -2214,6 +2233,10 @@ class PlayerActivity :
       // If fileName was already set, but mediaIdentifier is missing, set it for safety
       mediaIdentifier = getMediaIdentifier(intent, fileName)
     }
+
+    // Refresh the cached network share root (async) so intro/outro skip can correctly
+    // decide whether this network file sits directly in the share root.
+    refreshNetworkShareRoot()
 
     // Synchronously preload the resume position. event() is dispatched on the main
     // thread (runOnUiThread), so the PLAYBACK_RESTART handler cannot run until this
