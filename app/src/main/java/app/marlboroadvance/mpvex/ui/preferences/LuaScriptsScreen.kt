@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,7 +22,10 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,6 +33,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -41,17 +46,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.activity.compose.rememberLauncherForActivityResult
 import app.marlboroadvance.mpvex.preferences.AdvancedPreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import app.marlboroadvance.mpvex.utils.ScriptRepository
+import app.marlboroadvance.mpvex.utils.media.OpenDocumentTreeContract
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -145,6 +154,29 @@ object LuaScriptsScreen : Screen {
       }
     }
 
+    // SAF picker for the scripts directory. When picked, persists as the same URI preference
+    // that ScriptRepository reads, so the screen + mpv sync share one source of truth.
+    val scriptsDirPicker =
+      rememberLauncherForActivityResult(OpenDocumentTreeContract()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+          val flags =
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+          context.contentResolver.takePersistableUriPermission(uri, flags)
+        }
+        preferences.mpvConfStorageUri.set(uri.toString())
+      }
+
+    // Auto-focus the "新建脚本" button on TV when the empty state is shown so the user can
+    // press OK right away — TopAppBar actions aren't easy to reach on a D-Pad.
+    val newScriptFocus = remember { FocusRequester() }
+    val showEmpty = !isLoading && enableLuaScripts && availableScripts.isEmpty()
+    LaunchedEffect(showEmpty) {
+      if (showEmpty) {
+        runCatching { newScriptFocus.requestFocus() }
+      }
+    }
+
     Scaffold(
       topBar = {
         TopAppBar(
@@ -204,7 +236,7 @@ object LuaScriptsScreen : Screen {
               Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 48.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
               ) {
                 Icon(
                   imageVector = Icons.Outlined.Code,
@@ -218,11 +250,45 @@ object LuaScriptsScreen : Screen {
                   color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                  text = "将 .lua 或 .js 文件放入脚本目录：\n$locationHint",
+                  text = "当前脚本目录：\n$locationHint",
                   style = MaterialTheme.typography.bodyMedium,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                   textAlign = TextAlign.Center,
                 )
+                Text(
+                  text = "把 .lua 或 .js 文件放进该目录后回这里刷新；\n或直接新建脚本 / 改用其他目录。",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  textAlign = TextAlign.Center,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                  modifier = Modifier.focusRequester(newScriptFocus),
+                  onClick = { backStack.add(LuaScriptEditorScreen(scriptName = null)) },
+                  colors =
+                    ButtonDefaults.buttonColors(
+                      containerColor = MaterialTheme.colorScheme.primary,
+                    ),
+                ) {
+                  Icon(
+                    Icons.Outlined.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text(text = "新建脚本")
+                }
+                OutlinedButton(
+                  onClick = { scriptsDirPicker.launch(null) },
+                ) {
+                  Icon(
+                    Icons.Outlined.FolderOpen,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text(text = "选择脚本目录")
+                }
               }
             }
           }

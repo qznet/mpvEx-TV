@@ -243,7 +243,6 @@ object AdvancedPreferencesScreen : Screen {
           }
         val mpvConfStorageLocation by preferences.mpvConfStorageUri.collectAsState()
         val defaultMpvPath by preferences.mpvConfStoragePath.collectAsState()
-        val defaultScriptsPath by preferences.mpvScriptsDir.collectAsState()
         LazyColumn(
           modifier = Modifier
             .fillMaxSize()
@@ -484,14 +483,14 @@ object AdvancedPreferencesScreen : Screen {
               PreferenceDivider()
 
               Preference(
-                title = { Text(text = "脚本目录") },
+                title = { Text(text = "自定义 Lua 按钮") },
                 summary = {
                   Text(
-                    text = defaultScriptsPath,
+                    text = "创建并管理自定义 Lua 功能按钮",
                     color = MaterialTheme.colorScheme.outline,
                   )
                 },
-                onClick = {},
+                onClick = { backStack.add(CustomButtonsPreferencesScreen) },
               )
             }
           }
