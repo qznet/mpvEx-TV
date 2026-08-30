@@ -20,6 +20,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemClock
 import android.provider.MediaStore
+import app.marlboroadvance.mpvex.R
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
@@ -631,9 +632,11 @@ class PlayerActivity :
       finish()
     } else {
       lastBackArmTime = now
-      android.widget.Toast
-        .makeText(this, R.string.toast_press_back_again_to_exit, android.widget.Toast.LENGTH_SHORT)
-        .show()
+      android.widget.Toast.makeText(
+        this,
+        R.string.toast_press_back_again_to_exit,
+        android.widget.Toast.LENGTH_SHORT,
+      ).show()
     }
   }
 
