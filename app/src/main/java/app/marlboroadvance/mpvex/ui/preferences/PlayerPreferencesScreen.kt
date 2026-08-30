@@ -189,6 +189,36 @@ object PlayerPreferencesScreen : Screen {
                   )
                 },
               )
+
+              PreferenceDivider()
+
+              val clearUiOnBackPress by preferences.clearUiOnBackPress.collectAsState()
+              SwitchPreference(
+                value = clearUiOnBackPress,
+                onValueChange = preferences.clearUiOnBackPress::set,
+                title = { Text(stringResource(R.string.pref_player_clear_ui_on_back_title)) },
+                summary = {
+                  Text(
+                    text = stringResource(R.string.pref_player_clear_ui_on_back_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
+
+              PreferenceDivider()
+
+              val exitOnDoubleBackPress by preferences.exitOnDoubleBackPress.collectAsState()
+              SwitchPreference(
+                value = exitOnDoubleBackPress,
+                onValueChange = preferences.exitOnDoubleBackPress::set,
+                title = { Text(stringResource(R.string.pref_player_exit_on_double_back_title)) },
+                summary = {
+                  Text(
+                    text = stringResource(R.string.pref_player_exit_on_double_back_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
             }
           }
           // Seeking Section

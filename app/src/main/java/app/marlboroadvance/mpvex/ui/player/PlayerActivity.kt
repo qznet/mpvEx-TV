@@ -296,6 +296,9 @@ class PlayerActivity :
 
   private var isReady = false // Single flag: true when video loaded and ready
   private var isUserFinishing = false
+  // Back-key behavior: window (ms) within which a second back press exits the player
+  private val backPressExitWindowMs = 2000L
+  private var lastBackArmTime = 0L
   private var isManualBackgroundPlayback = false // Track manual background playback trigger
   private var noisyReceiverRegistered = false
   private var mpvInitialized = false // Track MPV initialization state
@@ -603,8 +606,35 @@ class PlayerActivity :
       return
     }
 
-    isUserFinishing = true
-    finish()
+    val clearUiOnBack = playerPreferences.clearUiOnBackPress.get()
+    val exitOnDoubleBack = playerPreferences.exitOnDoubleBackPress.get()
+    val uiVisible = viewModel.controlsShown.value
+    val now = System.currentTimeMillis()
+
+    // Step 1: the first back press clears the UI (hides player controls) when enabled
+    if (clearUiOnBack && uiVisible) {
+      viewModel.hideControls()
+      lastBackArmTime = now
+      return
+    }
+
+    // UI is already hidden (or clear-UI is disabled): decide how to exit
+    if (!exitOnDoubleBack) {
+      isUserFinishing = true
+      finish()
+      return
+    }
+
+    // Double-back-to-exit: a second back press inside the window exits
+    if (now - lastBackArmTime <= backPressExitWindowMs) {
+      isUserFinishing = true
+      finish()
+    } else {
+      lastBackArmTime = now
+      android.widget.Toast
+        .makeText(this, R.string.toast_press_back_again_to_exit, android.widget.Toast.LENGTH_SHORT)
+        .show()
+    }
   }
 
   @RequiresApi(Build.VERSION_CODES.P)

@@ -88,6 +88,11 @@
   <string name="pref_autoplay_next_video_summary">Automatically play next video when current ends</string>
   <string name="pref_auto_pip_title">Auto Picture-in-Picture</string>
   <string name="pref_auto_pip_summary">Automatically enter PIP mode when pressing home or back</string>
+  <string name="pref_player_clear_ui_on_back_title">Clear UI on back press</string>
+  <string name="pref_player_clear_ui_on_back_summary">First back press hides the player controls instead of exiting</string>
+  <string name="pref_player_exit_on_double_back_title">Exit with double back press</string>
+  <string name="pref_player_exit_on_double_back_summary">Press back once to clear the UI, then again within two seconds to exit</string>
+  <string name="toast_press_back_again_to_exit">Press back again to exit</string>
   <string name="pref_dynamic_speed_overlay_title">Dynamic Speed Overlay</string>
   <string name="pref_dynamic_speed_overlay_summary">Show advance overlay for speed control during long press and swipe</string>
   <string name="pref_show_navigation_bar_title">Show navigation bar with controls</string>

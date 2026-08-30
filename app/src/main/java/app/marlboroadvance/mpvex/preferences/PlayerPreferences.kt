@@ -160,6 +160,12 @@ class PlayerPreferences(
 
   val keepScreenOnWhenPaused = preferenceStore.getBoolean("keep_screen_on_when_paused", false)
 
+  // Back key behavior
+  // First back press hides the player controls (clears the UI) instead of exiting.
+  val clearUiOnBackPress = preferenceStore.getBoolean("clear_ui_on_back_press", true)
+  // Require a second back press within a short window to exit the player.
+  val exitOnDoubleBackPress = preferenceStore.getBoolean("exit_on_double_back_press", true)
+
   // Persist aspect ratio setting (default to Fit)
   val defaultVideoAspect = preferenceStore.getEnum("default_video_aspect", VideoAspect.Fit)
   val defaultCustomAspectRatio = preferenceStore.getObject(
