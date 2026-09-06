@@ -1905,24 +1905,30 @@ class PlayerActivity :
       }
     } else {
       window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-      // Some TV firmwares (e.g. TCL/MStar) silently drop the audio output when playback is
-      // resumed. The aid/sid property value is unchanged, so simply re-setting the same value
-      // does nothing — the track must be toggled off then back on to force mpv to rebuild the
-      // audio decoder / AO pipeline. This mirrors exactly what the user does when they
-      // "re-select the track" to recover sound. Only applied when a real track was selected
-      // (>0); auto (-1) and off states are left to mpv's own defaults.
+      // Reload the audio output on resume. Some Android TV firmwares (TCL/MStar) leave the
+      // AudioTrack AO in a broken state after pause: the active audio track is lost AND the
+      // audio clock drifts out of sync with the video. `ao-reload` tears down and recreates
+      // the audio output at the current playback position, fixing both symptoms at once. It is
+      // a no-op-cost, seamless operation on devices that don't exhibit the bug. Only run when a
+      // real audio track was active when we paused (audioTrackBeforePause > 0), so audio-less
+      // files are left untouched (the snapshot was reset to 0 on file load / when audio is off).
       if (audioTrackBeforePause > 0) {
-        Log.d(TAG, "Rebuilding audio track after resume (aid=$audioTrackBeforePause)")
-        runCatching {
-          player.aid = 0
-          player.aid = audioTrackBeforePause
-        }
+        Log.d(TAG, "Reloading audio output after resume to repair dropped track / A-V desync")
+        runCatching { MPVLib.command("ao-reload") }
       }
-      if (subTrackBeforePause > 0) {
-        Log.d(TAG, "Rebuilding subtitle track after resume (sid=$subTrackBeforePause)")
-        runCatching {
-          player.sid = 0
-          player.sid = subTrackBeforePause
+      // Belt-and-suspenders: if the firmware actually dropped the active audio/subtitle track
+      // (aid/sid reset to a different value), re-attach it. This only fires when the track
+      // really changed, so a healthy device (where ao-reload already restored everything) gets
+      // no extra churn; on a broken firmware it mirrors the manual "re-select track" recovery.
+      lifecycleScope.launch(Dispatchers.Main) {
+        delay(120)
+        if (audioTrackBeforePause > 0 && player.aid != audioTrackBeforePause) {
+          Log.d(TAG, "Audio track still missing after ao-reload; re-attaching aid=$audioTrackBeforePause")
+          runCatching { player.aid = audioTrackBeforePause }
+        }
+        if (subTrackBeforePause > 0 && player.sid != subTrackBeforePause) {
+          Log.d(TAG, "Subtitle track still missing after ao-reload; re-attaching sid=$subTrackBeforePause")
+          runCatching { player.sid = subTrackBeforePause }
         }
       }
     }
@@ -2276,6 +2282,11 @@ class PlayerActivity :
     // Clear any deferred resume target from the previous file before loading new state.
     pendingResumeSeek = null
     resumeSeekApplied = false
+
+    // Reset per-file audio/subtitle restore snapshots so a previous file's track ids are
+    // not re-applied after a later file (which may have different or no tracks at all).
+    audioTrackBeforePause = 0
+    subTrackBeforePause = 0
 
     // Reset per-file auto skip state. The intro decision is made live in the
     // PLAYBACK_RESTART handler (time-based, decoupled from resume), so we only need
