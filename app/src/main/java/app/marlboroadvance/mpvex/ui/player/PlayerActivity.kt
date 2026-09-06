@@ -1894,26 +1894,36 @@ class PlayerActivity :
    */
   private fun handlePauseStateChange(isPaused: Boolean) {
     if (isPaused) {
-      // Snapshot the currently active tracks so we can restore them if the device
-      // drops them when playback is resumed.
-      audioTrackBeforePause = player.aid
-      subTrackBeforePause = player.sid
+      // Snapshot the active tracks, but only when a real track is selected. This keeps a
+      // previously captured (>0) value if the firmware already cleared aid/sid the instant
+      // pause started, so the restore on resume still has something valid to re-apply.
+      if (player.aid > 0) audioTrackBeforePause = player.aid
+      if (player.sid > 0) subTrackBeforePause = player.sid
       // Only clear keep-screen-on if the preference is NOT enabled
       if (!playerPreferences.keepScreenOnWhenPaused.get()) {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
       }
     } else {
       window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-      // Some TV firmwares (TCL/MStar) reset the active track on resume, leaving playback
-      // silent until the user re-selects it. Re-apply the snapshot only when an explicit
-      // track was selected (>0); auto ("-1") and "off" ("-1") are left to mpv's defaults.
-      if (audioTrackBeforePause > 0 && player.aid != audioTrackBeforePause) {
-        Log.d(TAG, "Restoring audio track $audioTrackBeforePause after resume")
-        player.aid = audioTrackBeforePause
+      // Some TV firmwares (e.g. TCL/MStar) silently drop the audio output when playback is
+      // resumed. The aid/sid property value is unchanged, so simply re-setting the same value
+      // does nothing — the track must be toggled off then back on to force mpv to rebuild the
+      // audio decoder / AO pipeline. This mirrors exactly what the user does when they
+      // "re-select the track" to recover sound. Only applied when a real track was selected
+      // (>0); auto (-1) and off states are left to mpv's own defaults.
+      if (audioTrackBeforePause > 0) {
+        Log.d(TAG, "Rebuilding audio track after resume (aid=$audioTrackBeforePause)")
+        runCatching {
+          player.aid = 0
+          player.aid = audioTrackBeforePause
+        }
       }
-      if (subTrackBeforePause > 0 && player.sid != subTrackBeforePause) {
-        Log.d(TAG, "Restoring subtitle track $subTrackBeforePause after resume")
-        player.sid = subTrackBeforePause
+      if (subTrackBeforePause > 0) {
+        Log.d(TAG, "Rebuilding subtitle track after resume (sid=$subTrackBeforePause)")
+        runCatching {
+          player.sid = 0
+          player.sid = subTrackBeforePause
+        }
       }
     }
     updateMediaSessionPlaybackState(!isPaused)
