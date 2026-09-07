@@ -641,6 +641,24 @@ class TrackSelector(
         }
       }
 
+      // PASS D: AUTO-ENABLE ANY AVAILABLE SUBTITLE
+      // Requirement: whenever a video carries subtitles, enable one by default instead of
+      // leaving the viewer with nothing. Only reached when no smart pass above selected a
+      // track AND there is no explicit "subtitles off" session choice (applySessionSubtitleChoice
+      // would have returned true in that case) and no per-file saved-off state (hasState branch
+      // returns early). Prefer the file's own default subtitle track, then a clean
+      // non-forced/non-SDH track, then any non-forced track, then the first available.
+      if (currentSid <= 0) {
+        val auto = subTracks.firstOrNull { it.isDefault && !it.forced && !it.hearing }
+          ?: subTracks.firstOrNull { !it.forced && !it.hearing && ignoreSubs.none { kw -> it.title.contains(kw) } }
+          ?: subTracks.firstOrNull { !it.forced }
+          ?: subTracks.firstOrNull()
+        if (auto != null) {
+          Log.d(TAG, "Smart Sub: Auto-enabling available subtitle (id=${auto.id}, lang=${auto.lang}) [Applied]")
+          MPVLib.setPropertyInt("sid", auto.id)
+        }
+      }
+
     } catch (e: Exception) {
       Log.e(TAG, "Subtitle selection failed", e)
     }

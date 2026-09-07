@@ -96,6 +96,7 @@
   <string name="pref_player_exit_on_double_back_title">双击返回键退出</string>
   <string name="pref_player_exit_on_double_back_summary">按一次返回键清除界面，两秒内再按一次退出播放器</string>
   <string name="toast_press_back_again_to_exit">再按一次返回键退出</string>
+  <string name="toast_hwplus_unsupported_exit">当前视频不支持 HW+ 硬解，已退出播放</string>
   <string name="pref_dynamic_speed_overlay_title">动态速度叠加层</string>
   <string name="pref_dynamic_speed_overlay_summary">长按和滑动时显示高级速度控制叠加层</string>
   <string name="pref_show_navigation_bar_title">显示带控件的导航栏</string>

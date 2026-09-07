@@ -2304,6 +2304,33 @@ class PlayerActivity :
       runCatching { player.recoverVideoOutputIfNeeded() }
     }
 
+    // HW+ enforcement: the user can require pure hardware decoding. If the "HW+" decoder
+    // (hwdec=mediacodec) was selected but the current video cannot be decoded by MediaCodec
+    // (mpv falls back to software, reported as hwdec-current="no"), exit playback instead of
+    // silently dropping to software decoding. Only triggers for the explicit HW+ mode, not for
+    // "HW" (mediacodec-copy) or "auto". A 2s grace period avoids exiting on a transiently
+    // undecided decoder during slow network/SMB startup.
+    lifecycleScope.launch(Dispatchers.Main) {
+      delay(2000)
+      runCatching {
+        val hwdec = MPVLib.getPropertyString("hwdec")
+        val hwdecCurrent = MPVLib.getPropertyString("hwdec-current")
+        val hasVideo = MPVLib.getPropertyInt("video-params/w") != null
+        val paused = MPVLib.getPropertyBoolean("pause") == true
+        if (hwdec == "mediacodec" && hwdecCurrent == "no" && hasVideo && !paused) {
+          Log.w(TAG, "HW+ requested but video cannot be hardware-decoded; exiting playback")
+          runOnUiThread {
+            android.widget.Toast.makeText(
+              this@PlayerActivity,
+              R.string.toast_hwplus_unsupported_exit,
+              android.widget.Toast.LENGTH_LONG,
+            ).show()
+            finish()
+          }
+        }
+      }
+    }
+
     // Reset per-file auto skip state. The intro decision is made live in the
     // PLAYBACK_RESTART handler (time-based, decoupled from resume), so we only need
     // to clear the "already applied" flag here; the outro flag is also reset so the
