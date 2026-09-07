@@ -99,6 +99,7 @@ import app.marlboroadvance.mpvex.preferences.preference.deleteAndGet
 import app.marlboroadvance.mpvex.preferences.preference.plusAssign
 import app.marlboroadvance.mpvex.preferences.preference.minusAssign
 import app.marlboroadvance.mpvex.ui.player.Decoder.Companion.getDecoderFromValue
+import app.marlboroadvance.mpvex.ui.player.Decoder.Companion.isConcreteDecoder
 import app.marlboroadvance.mpvex.ui.player.Panels
 import app.marlboroadvance.mpvex.ui.player.PlayerActivity
 import app.marlboroadvance.mpvex.ui.player.PlayerUpdates
@@ -183,7 +184,18 @@ fun PlayerControls(
   val seekText by viewModel.seekText.collectAsState()
   val currentChapter by MPVLib.propInt["chapter"].collectAsState()
   val mpvDecoder by MPVLib.propString["hwdec-current"].collectAsState()
-  val decoder by remember { derivedStateOf { getDecoderFromValue(mpvDecoder ?: "auto") } }
+  // mpv marks hwdec-current as unavailable (null) whenever the video decoder is torn down,
+  // which on some TV firmwares also happens while paused; it reports a placeholder again
+  // once the decoder comes back. Reading that value straight through made an explicit HW+
+  // selection look like it silently reverted to Auto until the next file re-initialised the
+  // decoder, so remember the decoder that was last really in use and keep showing it.
+  var lastConcreteDecoder by remember { mutableStateOf<String?>(null) }
+  LaunchedEffect(mpvDecoder) {
+    if (isConcreteDecoder(mpvDecoder)) lastConcreteDecoder = mpvDecoder
+  }
+  val decoder by remember {
+    derivedStateOf { getDecoderFromValue(lastConcreteDecoder ?: "auto-copy") }
+  }
   val isSpeedNonOne by remember(playbackSpeed) {
     derivedStateOf { abs((playbackSpeed ?: 1f) - 1f) > 0.001f }
   }

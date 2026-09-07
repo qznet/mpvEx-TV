@@ -58,7 +58,18 @@ enum class Decoder(
   ;
 
   companion object {
-    fun getDecoderFromValue(value: String): Decoder = Decoder.entries.first { it.value == value }
+    /**
+     * Values mpv reports for `hwdec-current` only while a video decoder is actually
+     * initialised. Anything outside this set (`null`, "auto", "auto-copy") means "no
+     * decoder is running right now", not that the user picked Auto.
+     */
+    private val CONCRETE_VALUES = setOf("mediacodec", "mediacodec-copy", "no")
+
+    /** True when mpv reports a decoder that is really in use. */
+    fun isConcreteDecoder(value: String?): Boolean = value != null && value in CONCRETE_VALUES
+
+    fun getDecoderFromValue(value: String): Decoder =
+      entries.firstOrNull { it.value == value } ?: AutoCopy
   }
 }
 
