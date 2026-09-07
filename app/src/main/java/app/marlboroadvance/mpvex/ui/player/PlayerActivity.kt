@@ -1931,6 +1931,13 @@ class PlayerActivity :
           runCatching { player.sid = subTrackBeforePause }
         }
       }
+      // Video counterpart of the repair above: a paused/resumed session can come back with
+      // the video output dead (black screen, audio still playing). Give mpv a moment and
+      // rebuild the VO + re-select the video track if the picture did not come back.
+      lifecycleScope.launch(Dispatchers.Main) {
+        delay(600)
+        runCatching { player.recoverVideoOutputIfNeeded() }
+      }
     }
     updateMediaSessionPlaybackState(!isPaused)
     runCatching {
@@ -2287,6 +2294,15 @@ class PlayerActivity :
     // not re-applied after a later file (which may have different or no tracks at all).
     audioTrackBeforePause = 0
     subTrackBeforePause = 0
+
+    // vo=mediacodec_embed opens the video output the moment the file starts. If the OSD
+    // surface is not there yet the open fails, mpv deselects the video track and audio
+    // keeps playing over a black screen. Re-check once the load settled and rebuild the
+    // video output if the picture never appeared.
+    lifecycleScope.launch(Dispatchers.Main) {
+      delay(900)
+      runCatching { player.recoverVideoOutputIfNeeded() }
+    }
 
     // Reset per-file auto skip state. The intro decision is made live in the
     // PLAYBACK_RESTART handler (time-based, decoupled from resume), so we only need
