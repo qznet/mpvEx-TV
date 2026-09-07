@@ -2,6 +2,8 @@ package `is`.xyz.mpv
 
 import android.content.Context
 import android.graphics.PixelFormat
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.util.Log
 import android.view.SurfaceHolder
@@ -76,15 +78,51 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      * the video track, leaving audio playing over a black screen until another file
      * is loaded. Call this a moment after a file is loaded (or after playback
      * resumes); it is a no-op whenever video is already running.
+     *
+     * On background/lock-screen resume the OSD SurfaceView reports
+     * surfaceCreated (and sets [osdSurfaceReady]) before its underlying
+     * ANativeWindow is actually usable, so the first VO reopen may still hit
+     * "No Android OSD Surface is attached" and deselect the video track. This
+     * method therefore retries on a short delay until the picture appears (or we
+     * give up after [RECOVER_MAX] attempts). The top guard stops the instant video
+     * is present, so a working VO is never torn down by a later attempt.
      */
+    private val recoverHandler = Handler(Looper.getMainLooper())
+    private var recoverAttempts = 0
+    private val RECOVER_MAX = 12
+    private val RECOVER_DELAY_MS = 250L
+
     fun recoverVideoOutputIfNeeded() {
-        if (MPVLib.getPropertyInt("video-params/w") != null) return
-        // Nothing can be done until the OSD surface exists; the OSD callback retries
-        // as soon as it shows up.
-        if (voInUse == "mediacodec_embed" && osdSurface != null && !osdSurfaceReady) return
-        Log.w(TAG, "video output missing, re-opening vo=$voInUse")
+        // Picture is already up: cancel any pending retry chain and bail out.
+        if (MPVLib.getPropertyInt("video-params/w") != null) {
+            recoverAttempts = 0
+            recoverHandler.removeCallbacksAndMessages(null)
+            return
+        }
+        // gpu/gpu-next have no separate OSD surface; a single attempt suffices.
+        if (voInUse != "mediacodec_embed") {
+            reopenVo()
+            recoverVideoTrackIfMissing()
+            return
+        }
+        // Nothing can be done until the OSD surface exists; the OSD callback invokes
+        // us again as soon as it shows up.
+        if (osdSurface == null || !osdSurfaceReady) return
+        Log.w(TAG, "video output missing, re-opening vo=mediacodec_embed (attempt ${recoverAttempts + 1}/$RECOVER_MAX)")
         reopenVo()
         recoverVideoTrackIfMissing()
+        if (MPVLib.getPropertyInt("video-params/w") != null) {
+            recoverAttempts = 0
+            recoverHandler.removeCallbacksAndMessages(null)
+        } else if (recoverAttempts < RECOVER_MAX) {
+            recoverAttempts++
+            // Only ever keep a single pending retry in flight.
+            recoverHandler.removeCallbacksAndMessages(null)
+            recoverHandler.postDelayed({ recoverVideoOutputIfNeeded() }, RECOVER_DELAY_MS)
+        } else {
+            Log.w(TAG, "video output still missing after $RECOVER_MAX attempts; giving up (audio continues)")
+            recoverAttempts = 0
+        }
     }
 
     /**
@@ -104,19 +142,28 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
                 Log.w(TAG, "attaching osd surface")
                 MPVLib.attachOsdSurface(holder.surface)
                 osdSurfaceReady = true
-                // Re-open the VO so mediacodec_embed picks up the now-available OSD
-                // surface in case it was attached after the video surface / vo was set.
-                reopenVo()
-                recoverVideoTrackIfMissing()
+                // Do NOT reopen the VO synchronously here: the SurfaceView's surface may
+                // not be a fully usable ANativeWindow yet right after surfaceCreated
+                // (race on background/foreground resume), so a direct reopen still hits
+                // "No Android OSD Surface is attached". Let recoverVideoOutputIfNeeded()
+                // retry until the picture actually appears.
+                recoverVideoOutputIfNeeded()
             }
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                // OSD surface size is taken from the ANativeWindow; nothing to do.
+                // surfaceChanged is the reliable signal that the surface now has real
+                // dimensions and is a usable ANativeWindow. Re-attach (idempotent) and
+                // (re)try opening the VO through the retry-aware recovery path.
+                MPVLib.attachOsdSurface(holder.surface)
+                osdSurfaceReady = true
+                recoverVideoOutputIfNeeded()
             }
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 Log.w(TAG, "detaching osd surface")
                 osdSurfaceReady = false
+                recoverAttempts = 0
+                recoverHandler.removeCallbacksAndMessages(null)
                 MPVLib.detachOsdSurface()
             }
         })
@@ -165,6 +212,10 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
 
         holder.addCallback(this)
         observeProperties()
+
+        // Reset any stale VO-recovery retry state from a previous session.
+        recoverAttempts = 0
+        recoverHandler.removeCallbacksAndMessages(null)
     }
 
     /**
@@ -173,6 +224,9 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      * Call this once before the view is destroyed.
      */
     fun destroy() {
+        // Cancel any in-flight VO recovery retry so it can't touch mpv after destroy.
+        recoverAttempts = 0
+        recoverHandler.removeCallbacksAndMessages(null)
         // Disable surface callbacks to avoid using uninitialized mpv state
         holder.removeCallback(this)
         if (viewTreeObserver.isAlive) {
@@ -264,6 +318,10 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         Log.w(TAG, "detaching surface")
+        // Cancel pending VO recovery: with the surface gone a retry would reopen the
+        // VO against a missing surface and re-trigger the black screen.
+        recoverAttempts = 0
+        recoverHandler.removeCallbacksAndMessages(null)
         if (viewTreeObserver.isAlive) {
             viewTreeObserver.removeOnGlobalLayoutListener(embedRelayoutListener)
         }
