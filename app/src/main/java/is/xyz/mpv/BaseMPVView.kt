@@ -249,7 +249,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         observeProperties()
 
         // Reset any stale VO-recovery state from a previous session.
-        recoverAttempts = 0
+        recoveryAttempts = 0
         recoveryRunning = false
         videoSurfaceAttached = false
         osdAttached = false
@@ -265,7 +265,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     fun destroy() {
         // Cancel any in-flight VO recovery so it can't touch mpv after destroy.
         recoveryRunning = false
-        recoverAttempts = 0
+        recoveryAttempts = 0
         recoveryHandler.removeCallbacksAndMessages(null)
         // Mark destroyed BEFORE MPVLib.destroy() so any late surface callback that still
         // fires no-ops instead of touching an uninitialized native instance.
