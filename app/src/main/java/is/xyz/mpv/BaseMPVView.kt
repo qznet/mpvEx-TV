@@ -53,10 +53,21 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      * ("Video: no video") and never retries, which leaves audio playing over a
      * black screen until the next file is loaded. Re-selecting the track makes mpv
      * rebuild the decoder and the video output.
+     *
+     * CRITICAL: after the failed open mpv has only cleared the *track selection*;
+     * the `vid` option keeps its value ("auto"). Setting vid="auto" while it is
+     * already "auto" is a **no-op** in mpv — log-verified 2026-09-07 (18:14:40):
+     * `Set property: vid="auto" -> 1` produced zero track/decoder/VO activity and
+     * the picture never returned until a brand-new mpv instance was created. We
+     * therefore cycle vid no -> auto to force a REAL re-selection, after which
+     * mpv rebuilds the decoder chain and re-opens vo=mediacodec_embed by itself.
      */
     private fun recoverVideoTrackIfMissing() {
         if (MPVLib.getPropertyInt("video-params/w") != null) return
-        Log.w(TAG, "no video params after vo (re)open, re-selecting video track")
+        Log.w(TAG, "no video params after vo (re)open, forcing video track re-selection")
+        if (MPVLib.getPropertyString("vid") == "auto") {
+            MPVLib.setPropertyString("vid", "no")
+        }
         MPVLib.setPropertyString("vid", "auto")
         // mediacodec_embed only paints once a frame is decoded. When playback is paused,
         // re-selecting the track alone does not decode anything, so the screen stays black
@@ -90,16 +101,26 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     private val recoverHandler = Handler(Looper.getMainLooper())
     private var recoverAttempts = 0
     private val RECOVER_MAX = 12
-    private val RECOVER_DELAY_MS = 250L
+    private val RECOVER_DELAY_MS = 500L
+
+    /**
+     * Set once [destroy] ran. Surface callbacks can still fire after libmpv is gone
+     * (activity teardown order is not guaranteed); calling into MPVLib then throws
+     * "IllegalStateException: libmpv is not initialized or is shutting down".
+     * Log-verified 2026-09-07 18:14:48 — every teardown call is guarded with this.
+     */
+    @Volatile
+    private var mpvDestroyed = false
 
     fun recoverVideoOutputIfNeeded() {
+        if (mpvDestroyed) return
         // Picture is already up: cancel any pending retry chain and bail out.
         if (MPVLib.getPropertyInt("video-params/w") != null) {
             recoverAttempts = 0
             recoverHandler.removeCallbacksAndMessages(null)
             return
         }
-        // gpu/gpu-next have no separate OSD surface; a single attempt suffices.
+        // gpu/gpu-next have no separate OSD surface; reopening the VO is enough there.
         if (voInUse != "mediacodec_embed") {
             reopenVo()
             recoverVideoTrackIfMissing()
@@ -108,8 +129,12 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // Nothing can be done until the OSD surface exists; the OSD callback invokes
         // us again as soon as it shows up.
         if (osdSurface == null || !osdSurfaceReady) return
-        Log.w(TAG, "video output missing, re-opening vo=mediacodec_embed (attempt ${recoverAttempts + 1}/$RECOVER_MAX)")
-        reopenVo()
+        Log.w(TAG, "video output missing, forcing video track re-selection (attempt ${recoverAttempts + 1}/$RECOVER_MAX)")
+        // Do NOT reopen the VO here: with the track deselected, setting vo opens
+        // nothing and the vid no->auto cycle below makes mpv rebuild the decoder
+        // chain AND open vo=mediacodec_embed (with the OSD surface attached) itself.
+        // Calling reopenVo as well just tears down an in-flight rebuild (4K HEVC
+        // chain rebuilds can take longer than the retry delay).
         recoverVideoTrackIfMissing()
         if (MPVLib.getPropertyInt("video-params/w") != null) {
             recoverAttempts = 0
@@ -140,6 +165,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 Log.w(TAG, "attaching osd surface")
+                if (mpvDestroyed) return
                 MPVLib.attachOsdSurface(holder.surface)
                 osdSurfaceReady = true
                 // Do NOT reopen the VO synchronously here: the SurfaceView's surface may
@@ -154,6 +180,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
                 // surfaceChanged is the reliable signal that the surface now has real
                 // dimensions and is a usable ANativeWindow. Re-attach (idempotent) and
                 // (re)try opening the VO through the retry-aware recovery path.
+                if (mpvDestroyed) return
                 MPVLib.attachOsdSurface(holder.surface)
                 osdSurfaceReady = true
                 recoverVideoOutputIfNeeded()
@@ -164,6 +191,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
                 osdSurfaceReady = false
                 recoverAttempts = 0
                 recoverHandler.removeCallbacksAndMessages(null)
+                if (mpvDestroyed) return
                 MPVLib.detachOsdSurface()
             }
         })
@@ -216,6 +244,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // Reset any stale VO-recovery retry state from a previous session.
         recoverAttempts = 0
         recoverHandler.removeCallbacksAndMessages(null)
+        mpvDestroyed = false
     }
 
     /**
@@ -227,6 +256,9 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // Cancel any in-flight VO recovery retry so it can't touch mpv after destroy.
         recoverAttempts = 0
         recoverHandler.removeCallbacksAndMessages(null)
+        // Surface callbacks can still fire after this point (activity teardown order
+        // is not guaranteed); from now on they must not call into MPVLib.
+        mpvDestroyed = true
         // Disable surface callbacks to avoid using uninitialized mpv state
         holder.removeCallback(this)
         if (viewTreeObserver.isAlive) {
@@ -325,6 +357,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         if (viewTreeObserver.isAlive) {
             viewTreeObserver.removeOnGlobalLayoutListener(embedRelayoutListener)
         }
+        if (mpvDestroyed) return
         MPVLib.setPropertyString("vo", "null")
         MPVLib.setPropertyString("force-window", "no")
         // Note that before calling detachSurface() we need to be sure that libmpv
