@@ -56,6 +56,16 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         if (MPVLib.getPropertyInt("video-params/w") != null) return
         Log.w(TAG, "no video params after vo (re)open, re-selecting video track")
         MPVLib.setPropertyString("vid", "auto")
+        // mediacodec_embed only paints once a frame is decoded. When playback is paused,
+        // re-selecting the track alone does not decode anything, so the screen stays black
+        // even though the track is back. Nudge a re-decode by seeking to the current
+        // position: a (no-op) seek re-reads the frame and paints it. On resume this is not
+        // needed because new frames decode naturally.
+        if (MPVLib.getPropertyBoolean("pause") == true) {
+            val pos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
+            Log.w(TAG, "paused: nudging frame decode at $pos to restore picture")
+            runCatching { MPVLib.command("seek", pos.toString(), "absolute") }
+        }
     }
 
     /**
@@ -224,7 +234,19 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // Ensure VO is set before loadfile (critical for mediacodec_embed).
         // Re-opening (instead of just setting) is required because the surface below
         // it was just replaced, and a stale/broken VO would otherwise be kept.
-        reopenVo()
+        // IMPORTANT: vo=mediacodec_embed can only open while the OSD ANativeWindow is
+        // attached. The OSD surface is created asynchronously and on surface recreation
+        // (e.g. Activity re-create on background/foreground, config change, or pause on
+        // some TV firmwares) it often lags the main surface by hundreds of ms. If we
+        // reopen here before the OSD surface exists, mpv aborts the open with
+        // "No Android OSD Surface is attached", deselects the video track and never
+        // retries -> permanent black screen until the next file is loaded. When the OSD
+        // surface is not ready yet, skip the reopen and let the OSD surfaceCreated
+        // callback perform it the moment it becomes available.
+        val osdNotReady = voInUse == "mediacodec_embed" && osdSurface != null && !osdSurfaceReady
+        if (!osdNotReady) {
+            reopenVo()
+        }
 
         if (filePath != null) {
             MPVLib.command("loadfile", filePath as String)
