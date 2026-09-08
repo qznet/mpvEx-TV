@@ -126,6 +126,32 @@ class PlayerPreferences(
    */
   val skipOutroSeconds = preferenceStore.getInt("skip_outro_seconds", 60)
 
+  // ==================== Cache / memory limits (low-RAM devices) ====================
+
+  /**
+   * Master switch for conservative mpv cache limits.
+   *
+   * On low-RAM devices (<=3GB, typical for Android TV boxes) the demuxer cache keeps
+   * growing during long playback until the OS kills the process, which surfaces as a
+   * freeze + black screen that can't be exited. When enabled we cap the cache with the
+   * values below and let mpv pause briefly to refill instead of running out of memory.
+   * The brief pause is the same "short stall then continues" behaviour webhtv shows;
+   * it is far better than a hard freeze.
+   */
+  val lowMemoryMode = preferenceStore.getBoolean("low_memory_mode", true)
+
+  /** Forward buffer target in seconds (mpv `cache-secs`). */
+  val cacheSecs = preferenceStore.getInt("cache_secs", 10)
+
+  /** How far ahead the demuxer reads, in seconds (mpv `demuxer-readahead-secs`). */
+  val cacheReadaheadSecs = preferenceStore.getInt("cache_readahead_secs", 20)
+
+  /** Max in-memory demuxer cache in MiB (mpv `demuxer-max-bytes`). */
+  val demuxerMaxBytesMib = preferenceStore.getInt("demuxer_max_bytes_mib", 64)
+
+  /** Max cached already-played data in MiB (mpv `demuxer-max-back-bytes`). */
+  val demuxerMaxBackBytesMib = preferenceStore.getInt("demuxer_max_back_bytes_mib", 16)
+
   /**
    * User-defined Lua buttons shown on the player overlay. Up to 8 fixed slots (L1..L4, R1..R4).
    * Older installs persisted a flat `List<CustomButton>`; the deserializer migrates that

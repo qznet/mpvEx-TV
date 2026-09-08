@@ -946,6 +946,28 @@ class PlayerActivity :
     super.onStop()
   }
 
+  /**
+   * Give memory back when the system asks for it.
+   *
+   * On low-RAM TVs (<=3GB) long playback can push the process into the critical zone.
+   * Handing mpv's cached buffers back here costs a brief stall while it refills, which
+   * is far better than the OS killing us mid-playback — that is what produced the
+   * freeze + black screen that could no longer be exited.
+   */
+  override fun onTrimMemory(level: Int) {
+    super.onTrimMemory(level)
+    if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) return
+    runCatching {
+      // Shrink the cache caps so mpv trims on the next read...
+      MPVLib.setPropertyString("demuxer-max-bytes", "${8 * 1024 * 1024}")
+      MPVLib.setPropertyString("demuxer-max-back-bytes", "0")
+      // ...and drop the queued audio/video/demuxer buffers to free it right now.
+      MPVLib.command("drop-buffers")
+    }.onFailure { e ->
+      Log.d(TAG, "onTrimMemory: could not release mpv buffers: ${e.message}")
+    }
+  }
+
   @RequiresApi(Build.VERSION_CODES.P)
   override fun onStart() {
     super.onStart()

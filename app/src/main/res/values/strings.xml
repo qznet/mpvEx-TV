@@ -137,6 +137,18 @@
   <string name="pref_player_double_tap_seek_duration">Double tap seek duration</string>
   <string name="pref_player_custom_skip_duration_title">Custom skip duration</string>
   <string name="pref_player_custom_skip_duration_summary">Duration to skip forward on custom skip button</string>
+
+  <!-- Cache &amp; memory (low-RAM devices) -->
+  <string name="pref_player_cache_memory">Cache &amp; memory</string>
+  <string name="pref_player_low_memory_mode">Low memory mode</string>
+  <string name="pref_player_demuxer_max_bytes">Max memory cache</string>
+  <string name="pref_player_demuxer_max_bytes_summary">Upper bound for the mpv in-memory cache</string>
+  <string name="pref_player_demuxer_max_back_bytes">Keep played data</string>
+  <string name="pref_player_demuxer_max_back_bytes_summary">How much already-played data stays cached</string>
+  <string name="pref_player_cache_readahead_secs">Read-ahead</string>
+  <string name="pref_player_cache_readahead_secs_summary">How far ahead mpv reads</string>
+  <string name="pref_player_cache_secs">Forward buffer target</string>
+  <string name="pref_player_cache_secs_summary">Seconds of buffer kept ahead</string>
   <string name="pref_player_seeking_title">Seeking</string>
   <string name="pref_player_close_after_eof">Close after the end of playback</string>
   <string name="pref_player_remember_brightness">Remember display brightness</string>

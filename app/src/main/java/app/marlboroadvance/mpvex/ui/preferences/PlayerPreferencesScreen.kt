@@ -273,6 +273,98 @@ object PlayerPreferencesScreen : Screen {
               )
             }
           }
+
+          // Cache & memory section (helps low-RAM TVs survive long playback)
+          item {
+            PreferenceSectionHeader(title = stringResource(R.string.pref_player_cache_memory))
+          }
+
+          item {
+            PreferenceCard {
+              val lowMemoryMode by preferences.lowMemoryMode.collectAsState()
+              SwitchPreference(
+                value = lowMemoryMode,
+                onValueChange = preferences.lowMemoryMode::set,
+                title = { Text(stringResource(R.string.pref_player_low_memory_mode)) },
+              )
+
+              PreferenceDivider()
+
+              val demuxerMaxBytesMib by preferences.demuxerMaxBytesMib.collectAsState()
+              SliderPreference(
+                value = demuxerMaxBytesMib.toFloat(),
+                onValueChange = { preferences.demuxerMaxBytesMib.set(it.roundToInt()) },
+                title = { Text(stringResource(R.string.pref_player_demuxer_max_bytes)) },
+                valueRange = 8f..512f,
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_demuxer_max_bytes_summary) +
+                      " ($demuxerMaxBytesMib MiB)",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onSliderValueChange = { preferences.demuxerMaxBytesMib.set(it.roundToInt()) },
+                sliderValue = demuxerMaxBytesMib.toFloat(),
+              )
+
+              PreferenceDivider()
+
+              val demuxerMaxBackBytesMib by preferences.demuxerMaxBackBytesMib.collectAsState()
+              SliderPreference(
+                value = demuxerMaxBackBytesMib.toFloat(),
+                onValueChange = { preferences.demuxerMaxBackBytesMib.set(it.roundToInt()) },
+                title = { Text(stringResource(R.string.pref_player_demuxer_max_back_bytes)) },
+                valueRange = 0f..256f,
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_demuxer_max_back_bytes_summary) +
+                      " ($demuxerMaxBackBytesMib MiB)",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onSliderValueChange = { preferences.demuxerMaxBackBytesMib.set(it.roundToInt()) },
+                sliderValue = demuxerMaxBackBytesMib.toFloat(),
+              )
+
+              PreferenceDivider()
+
+              val cacheReadaheadSecs by preferences.cacheReadaheadSecs.collectAsState()
+              SliderPreference(
+                value = cacheReadaheadSecs.toFloat(),
+                onValueChange = { preferences.cacheReadaheadSecs.set(it.roundToInt()) },
+                title = { Text(stringResource(R.string.pref_player_cache_readahead_secs)) },
+                valueRange = 1f..120f,
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_cache_readahead_secs_summary) +
+                      " ($cacheReadaheadSecs s)",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onSliderValueChange = { preferences.cacheReadaheadSecs.set(it.roundToInt()) },
+                sliderValue = cacheReadaheadSecs.toFloat(),
+              )
+
+              PreferenceDivider()
+
+              val cacheSecs by preferences.cacheSecs.collectAsState()
+              SliderPreference(
+                value = cacheSecs.toFloat(),
+                onValueChange = { preferences.cacheSecs.set(it.roundToInt()) },
+                title = { Text(stringResource(R.string.pref_player_cache_secs)) },
+                valueRange = 1f..60f,
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_cache_secs_summary) + " ($cacheSecs s)",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onSliderValueChange = { preferences.cacheSecs.set(it.roundToInt()) },
+                sliderValue = cacheSecs.toFloat(),
+              )
+            }
+          }
+
           // Gestures Section
           item {
             PreferenceSectionHeader(title = stringResource(R.string.pref_player_gestures))

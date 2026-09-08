@@ -142,6 +142,18 @@
   <string name="pref_player_double_tap_seek_duration">双击寻道时长</string>
   <string name="pref_player_custom_skip_duration_title">自定义跳转时长</string>
   <string name="pref_player_custom_skip_duration_summary">自定义跳转按钮的前进时长</string>
+
+  <!-- Cache &amp; memory (low-RAM devices) -->
+  <string name="pref_player_cache_memory">缓存与内存</string>
+  <string name="pref_player_low_memory_mode">低内存模式</string>
+  <string name="pref_player_demuxer_max_bytes">内存缓存上限</string>
+  <string name="pref_player_demuxer_max_bytes_summary">mpv 内存缓存的上限</string>
+  <string name="pref_player_demuxer_max_back_bytes">已播放数据保留</string>
+  <string name="pref_player_demuxer_max_back_bytes_summary">已播放部分保留的缓存量</string>
+  <string name="pref_player_cache_readahead_secs">预读时长</string>
+  <string name="pref_player_cache_readahead_secs_summary">mpv 向前预读的秒数</string>
+  <string name="pref_player_cache_secs">前向缓冲目标</string>
+  <string name="pref_player_cache_secs_summary">向前保持的缓冲秒数</string>
   <string name="pref_player_seeking_title">寻道</string>
   <string name="pref_player_close_after_eof">播放结束后关闭</string>
   <string name="pref_player_remember_brightness">记住屏幕亮度</string>

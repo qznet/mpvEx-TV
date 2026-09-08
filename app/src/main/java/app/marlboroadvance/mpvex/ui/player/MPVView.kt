@@ -144,18 +144,43 @@ class MPVView(
       MPVLib.setOptionString("vf", "format=yuv420p")
     }
 
-    // Cap demuxer cache for mobile to prevent memory issues.
     // gpu-next on Android benefits from a slightly deeper queue to reduce
     // AImageReader timeout spikes when the decoder/render threads jitter.
-    val cacheMegs = when {
-      useGpuNext && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 -> 128
-      android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 -> 64
-      else -> 32
-    }
-    MPVLib.setOptionString("demuxer-max-bytes", "${cacheMegs * 1024 * 1024}")
-    MPVLib.setOptionString("demuxer-max-back-bytes", "${cacheMegs * 1024 * 1024}")
+    // Configure it first so the low-memory limits below take precedence.
     if (useGpuNext) {
       configureGpuNextTimingBuffer()
+    }
+
+    // Demuxer cache limits. On low-RAM devices (<=3GB, typical for Android TV boxes)
+    // the cache keeps growing through a long session until the OS kills the process,
+    // which surfaces as a freeze + black screen that can no longer be exited.
+    // "Low memory mode" applies the user's limits and lets mpv pause briefly to
+    // refill instead of exhausting memory — the same "short stall, then continues"
+    // behaviour webhtv shows, which is far better than a hard freeze.
+    if (playerPreferences.lowMemoryMode.get()) {
+      val maxMib = playerPreferences.demuxerMaxBytesMib.get().coerceIn(8, 512)
+      val backMib = playerPreferences.demuxerMaxBackBytesMib.get().coerceIn(0, 256)
+      val readaheadSecs = playerPreferences.cacheReadaheadSecs.get().coerceIn(1, 600)
+      val forwardSecs = playerPreferences.cacheSecs.get().coerceIn(0, 600)
+      MPVLib.setOptionString("demuxer-max-bytes", "${maxMib * 1024 * 1024}")
+      MPVLib.setOptionString("demuxer-max-back-bytes", "${backMib * 1024 * 1024}")
+      MPVLib.setOptionString("demuxer-readahead-secs", readaheadSecs.toString())
+      MPVLib.setOptionString("cache-secs", forwardSecs.toString())
+      MPVLib.setOptionString("cache", "yes")
+      // Pause to refill instead of running the buffer dry (graceful stall).
+      MPVLib.setOptionString("cache-pause", "yes")
+      MPVLib.setOptionString("cache-pause-wait", "3")
+    } else {
+      // Cap demuxer cache for mobile to prevent memory issues.
+      // gpu-next on Android benefits from a slightly deeper queue to reduce
+      // AImageReader timeout spikes when the decoder/render threads jitter.
+      val cacheMegs = when {
+        useGpuNext && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 -> 128
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 -> 64
+        else -> 32
+      }
+      MPVLib.setOptionString("demuxer-max-bytes", "${cacheMegs * 1024 * 1024}")
+      MPVLib.setOptionString("demuxer-max-back-bytes", "${cacheMegs * 1024 * 1024}")
     }
 
     val logLevel = if (advancedPreferences.verboseLogging.get()) "v" else "warn"
