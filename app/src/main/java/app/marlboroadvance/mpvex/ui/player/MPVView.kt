@@ -131,12 +131,17 @@ class MPVView(
       MPVLib.setOptionString("gpu-context", "android")
     }
 
-    // Default to copy-back decoding on Android. This is slower on paper than
-    // direct mediacodec, but materially more stable than the zero-copy
-    // AImageReader path for problematic HEVC/HDR content on many devices.
+    // Default to zero-copy MediaCodec (HW+). With vo=mediacodec_embed the decoded
+    // frames stay in the codec's output surface and are never copied into app RAM.
+    // This is critical on low-RAM Android TV boxes (<=3GB), where copy-back decoding
+    // (mediacodec-copy / auto-copy) keeps one decoded frame buffer per displayed
+    // frame in the app heap — the dominant, uncapped memory sink during long
+    // playback that drives the freeze + black screen. Also the project's mandated
+    // decoder mode (HW+ for all videos). The live in-player decoder switcher still
+    // lets the user drop to HW / SW / Auto per session if needed.
     MPVLib.setOptionString(
       "hwdec",
-      if (decoderPreferences.tryHWDecoding.get()) "auto-copy" else "no",
+      if (decoderPreferences.tryHWDecoding.get()) "mediacodec" else "no",
     )
     MPVLib.setOptionString("hwdec-codecs", "all")
 
