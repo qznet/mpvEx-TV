@@ -72,6 +72,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.io.File
@@ -309,6 +310,24 @@ class PlayerActivity :
   private var isManualBackgroundPlayback = false // Track manual background playback trigger
   private var noisyReceiverRegistered = false
   private var mpvInitialized = false // Track MPV initialization state
+
+  // ----- Playback stall watchdog (mediacodec_embed random-hang recovery) -----
+  // Random black-screen freeze on low-RAM TV boxes (e.g. TCL Android 9, 3GB): the
+  // video freezes, the app cannot be exited, and memory is fine (~60% at death) —
+  // mpv's event loop is stuck in the mediacodec_embed / MediaCodec path so even
+  // MPVLib.destroy() cannot run. This watchdog polls time-pos; if playback is not
+  // paused yet time-pos has not advanced for STALL_THRESHOLD_MS it escalates a
+  // recovery (re-seek -> reopen VO -> vid re-select), spaced by a cooldown and
+  // capped, so a hard deadlock is never turned into a thrash loop.
+  private var stallWatchdogJob: Job? = null
+  private var lastProgressTimePos = 0.0
+  private var lastProgressMs = 0L
+  private var lastRecoveryMs = 0L
+  private var stallAttempts = 0
+  private val STALL_WATCHDOG_INTERVAL_MS = 2000L
+  private val STALL_THRESHOLD_MS = 10_000L        // > cache-pause 3s window, avoids false trips
+  private val STALL_RECOVERY_COOLDOWN_MS = 20_000L
+  private val STALL_MAX_ATTEMPTS = 3
   private var savePlaybackStateJob: kotlinx.coroutines.Job? = null // Track ongoing save job
   private var savePlaybackStateJobIdentifier: String? = null // Media identifier the ongoing save belongs to
   private var audioFocusActive = false // Whether we currently hold audio focus
@@ -782,6 +801,7 @@ class PlayerActivity :
   }
 
   private fun cleanupMPV() {
+    stopStallWatchdog()
     if (!mpvInitialized) return
 
     player.isExiting = true
@@ -820,6 +840,90 @@ class PlayerActivity :
       mpvInitialized = false
     }.onFailure { e ->
       Log.e(TAG, "Error cleaning up MPV", e)
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Playback stall watchdog (mediacodec_embed random-hang recovery)
+  // ------------------------------------------------------------------
+
+  private fun startStallWatchdog() {
+    if (!mpvInitialized) return
+    stallWatchdogJob?.cancel()
+    lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
+    lastProgressMs = System.currentTimeMillis()
+    stallAttempts = 0
+    stallWatchdogJob = playerScope.launch {
+      while (isActive) {
+        delay(STALL_WATCHDOG_INTERVAL_MS)
+        runCatching { tickStallWatchdog() }
+      }
+    }
+  }
+
+  private fun stopStallWatchdog() {
+    stallWatchdogJob?.cancel()
+    stallWatchdogJob = null
+  }
+
+  private fun tickStallWatchdog() {
+    if (!mpvInitialized || player.isExiting || isFinishing) return
+    // No file loaded (idle / pre-load screen) -> nothing to watch.
+    if (MPVLib.getPropertyString("path").isNullOrBlank()) return
+    // Paused (incl. cache-pause refill) is not a stall; just reset baseline.
+    if (MPVLib.getPropertyBoolean("pause") == true) {
+      lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: lastProgressTimePos
+      lastProgressMs = System.currentTimeMillis()
+      return
+    }
+    val pos = MPVLib.getPropertyDouble("time-pos") ?: return
+    val now = System.currentTimeMillis()
+    if (pos - lastProgressTimePos > 0.3) {
+      // Progressing normally: keep baseline fresh and clear the attempt count.
+      lastProgressTimePos = pos
+      lastProgressMs = now
+      stallAttempts = 0
+      return
+    }
+    // time-pos is frozen. Only act after the grace window and the recovery cooldown.
+    if (now - lastProgressMs < STALL_THRESHOLD_MS) return
+    if (now - lastRecoveryMs < STALL_RECOVERY_COOLDOWN_MS) return
+    if (stallAttempts >= STALL_MAX_ATTEMPTS) return
+    lastRecoveryMs = now
+    stallAttempts++
+    recoverFromStall(stallAttempts)
+  }
+
+  private fun recoverFromStall(attempt: Int) {
+    Log.w(TAG, "stall watchdog attempt #$attempt: time-pos frozen, recovering playback")
+    when (attempt) {
+      1 -> {
+        // Gentlest: re-seek ~0.5s ahead. A relative seek re-initialises the MediaCodec
+        // decoder at the nearest keyframe without touching the VO or the video track,
+        // which clears many transient codec stalls.
+        val target = (MPVLib.getPropertyDouble("time-pos") ?: 0.0) + 0.5
+        runCatching { MPVLib.command("seek", target.toString(), "relative+exact") }
+      }
+      2 -> {
+        // Rebuild the video output. reopenVo() forces vo=null then back to
+        // mediacodec_embed, tearing down and rebuilding the broken VO even when its
+        // value is already "mediacodec_embed" (avoids the "set same vo = no-op" trap).
+        // recoverVideoOutputIfNeeded() also no-ops safely when the OSD surface is not
+        // yet a real window, so it cannot re-trigger the old
+        // "No Android OSD Surface is attached" race.
+        runCatching { player.recoverVideoOutputIfNeeded() }
+      }
+      else -> {
+        // Last resort: VO rebuild + force video-track re-selection. The vid no->auto
+        // cycle is required because setting vid=auto while it is already "auto" is a
+        // no-op (mpv drops the re-select) — that is exactly why the earlier single
+        // vid=auto call never restored the track.
+        runCatching { player.recoverVideoOutputIfNeeded() }
+        if (MPVLib.getPropertyInt("video-params/w") == null) {
+          MPVLib.setPropertyString("vid", "no")
+          MPVLib.setPropertyString("vid", "auto")
+        }
+      }
     }
   }
 
@@ -878,6 +982,7 @@ class PlayerActivity :
     }
 
     super.onPause()
+    stopStallWatchdog()
   }
 
   @RequiresApi(Build.VERSION_CODES.P)
@@ -1460,6 +1565,7 @@ class PlayerActivity :
   override fun onResume() {
     super.onResume()
     updateVolume()
+    startStallWatchdog()
   }
 
   /**
