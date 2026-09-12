@@ -2083,6 +2083,29 @@ class PlayerActivity :
    */
   private fun handleEndOfFile(isEof: Boolean) {
     if (isEof) {
+      // Guard against spurious end-of-file. mpv raises eof-reached both on a genuine end
+      // of file AND when the stream is interrupted (e.g. SMB read error / idle timeout on
+      // long files) or when duration is misprobed. Blindly auto-advancing to the next
+      // episode in those cases skips mid-playback (observed: TCL 3GB TV, long SMB file jumps
+      // to next ~1h in, then the next file loops at 0-0.4s). Only treat it as a real end
+      // when the playhead is actually at/near the reported duration.
+      val dur = MPVLib.getPropertyDouble("duration") ?: 0.0
+      val pos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
+      if (dur > 0.0 && pos < dur - 5.0) {
+        Log.w(
+          TAG,
+          "EOF guard: ignoring spurious end-of-file (pos=${"%.1f".format(pos)}s / " +
+            "dur=${"%.1f".format(dur)}s, playlistIndex=$playlistIndex/${playlist.size}); " +
+            "NOT advancing to next episode",
+        )
+        return
+      }
+      Log.d(
+        TAG,
+        "EOF guard: real end-of-file confirmed (pos=${"%.1f".format(pos)}s / " +
+          "dur=${"%.1f".format(dur)}s); advancing",
+      )
+
       // Check if we should repeat the current file
       if (viewModel.shouldRepeatCurrentFile()) {
         MPVLib.command("seek", "0", "absolute")
