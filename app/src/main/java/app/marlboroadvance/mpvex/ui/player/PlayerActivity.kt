@@ -905,6 +905,16 @@ class PlayerActivity :
 
   private fun recoverFromStall(attempt: Int) {
     Log.w(TAG, "stall watchdog attempt #$attempt: time-pos frozen, recovering playback")
+    // SMB/FTP/WebDAV are served through the local NetworkStreamingProxy. A frozen network
+    // stream means the proxy's cached SMB client has wedged (socket dead but not yet
+    // detected). re-seek / VO-reopen / vid-reselect all operate above the network layer
+    // and cannot fetch a single byte, and reloading the same proxy URL just reuses the
+    // dead client — so they are pointless here. Go straight to a connection rebuild,
+    // which is exactly what "exit and reopen" does to clear this stall.
+    if (isNetworkSource()) {
+      rebuildNetworkSource(attempt)
+      return
+    }
     when (attempt) {
       1 -> {
         // Gentlest: re-seek ~0.5s ahead. A relative seek re-initialises the MediaCodec
@@ -933,37 +943,100 @@ class PlayerActivity :
           MPVLib.setPropertyString("vid", "auto")
         }
       }
-      4 -> {
-        // Final resort: the stream itself is wedged (e.g. dead SMB/WebDAV socket),
-        // so re-seek / VO / vid recoveries cannot fetch any data — the playhead
-        // snaps back to the frozen point (exactly the "drag the bar, it returns"
-        // symptom). The only fix is to tear down and re-open the source, which is
-        // what the user does by exiting and re-entering. loadPlaylistItem() rebuilds
-        // the SMB connection and, via saveVideoPlaybackState/restore, resumes at the
-        // stuck position.
+      else -> {
+        // Local file last resort: re-open the source. Mirrors the user's manual
+        // "exit and reopen" for non-network media.
         reloadCurrentMedia()
       }
     }
   }
 
   /**
-   * Tear down and re-open the current media source. Used as the last stall-recovery
-   * tier when the underlying network stream has wedged: re-seek / VO rebuild / vid
-   * re-select all operate on an unreadable source and cannot help, but a fresh
-   * loadfile re-establishes the SMB/WebDAV connection. Mirrors the user's manual
+   * True when the currently loaded media is served through the local network streaming
+   * proxy (SMB/FTP/WebDAV). Those protocols cannot be opened by libmpv directly; the app
+   * proxies them through NetworkStreamingProxy, so a stall there is a network/connection
+   * problem, not a decoder problem.
+   */
+  private fun isNetworkSource(): Boolean {
+    val p = MPVLib.getPropertyString("path") ?: ""
+    return p.contains("127.0.0.1") || p.contains("localhost") || p.contains("0.0.0.0") ||
+      p.startsWith("smb:") || p.startsWith("ftp:") || p.startsWith("ftps:") ||
+      p.startsWith("webdav:") || p.startsWith("webdavs:") ||
+      intent.hasExtra("network_connection_id")
+  }
+
+  /**
+   * Rebuild the network connection for a wedged SMB/FTP/WebDAV stream. The proxy caches
+   * one NetworkClient per connection id; once that socket dies the only recovery is to
+   * drop the proxy singleton (which also drops the cached client + listening port) and
+   * re-resolve the playable URI the same way launch does — yielding a fresh client and a
+   * fresh port. This is exactly what manually exiting and reopening the file does.
+   */
+  private fun rebuildNetworkSource(attempt: Int) {
+    // Capture the stuck position BEFORE tearing the proxy down — after stopInstance the
+    // time-pos becomes unusable.
+    val resumePos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
+    Log.w(
+      TAG,
+      "stall watchdog attempt #$attempt: network source wedged at " +
+        "${"%.1f".format(resumePos)}s; restarting proxy to rebuild SMB connection",
+    )
+    runCatching {
+      app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.stopInstance()
+    }.onFailure { e -> Log.w(TAG, "stall watchdog: stopInstance failed: ${e.message}") }
+    // Re-resolve exactly like launch (registerStream on a fresh proxy → fresh URL).
+    val fresh = runCatching { getPlayableUri(intent) }.getOrNull()
+    val target = if (!fresh.isNullOrBlank()) fresh else MPVLib.getPropertyString("path")
+    if (target.isNullOrBlank()) {
+      if (attempt >= STALL_MAX_ATTEMPTS) {
+        Log.e(TAG, "stall watchdog: re-resolve failed after $attempt attempts; restarting activity")
+        restartPlayerActivity()
+      } else {
+        Log.w(TAG, "stall watchdog: re-resolve returned empty; will retry on next attempt")
+      }
+      return
+    }
+    Log.w(TAG, "stall watchdog: reloading rebuilt URI to recover wedged stream")
+    MPVLib.command("loadfile", target)
+    // Best-effort: snap back to the exact stuck point once the (re)load has buffered.
+    lifecycleScope.launch(Dispatchers.IO) {
+      delay(2000)
+      runCatching { MPVLib.command("seek", resumePos.toString(), "absolute+exact") }
+    }
+  }
+
+  /**
+   * Last-resort recovery: fully restart the player activity. Used when even the proxy
+   * rebuild cannot re-resolve the source (e.g. server briefly unreachable). This is the
+   * in-app equivalent of the user's manual "exit and reopen", the known-good fix for a
+   * wedged network stream.
+   */
+  private fun restartPlayerActivity() {
+    Log.w(TAG, "stall watchdog: restarting PlayerActivity to rebuild network connection")
+    val restartIntent = Intent(intent)
+    restartIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+    applicationContext.startActivity(restartIntent)
+    finish()
+  }
+
+  /**
+   * Tear down and re-open the current media source for LOCAL files. Used as the last
+   * stall-recovery tier when the underlying source has wedged (e.g. a dead local fd):
+   * re-seek / VO rebuild / vid re-select all operate on an unreadable source and cannot
+   * help, but a fresh loadfile re-establishes it. Mirrors the user's manual
    * "exit and reopen" that reliably clears the soft stall.
    */
   private fun reloadCurrentMedia() {
     val resumePos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
     val idx = playlistIndex
     if (playlist.isNotEmpty() && idx in playlist.indices) {
-      Log.w(TAG, "stall watchdog: reloading current media (index=$idx) to recover wedged stream")
+      Log.w(TAG, "stall watchdog: reloading current media (index=$idx) to recover wedged source")
       loadPlaylistItem(idx)
     } else {
       // Single-file / no playlist: re-open whatever mpv currently has loaded.
       val p = MPVLib.getPropertyString("path")
       if (!p.isNullOrBlank()) {
-        Log.w(TAG, "stall watchdog: reloading current path=$p to recover wedged stream")
+        Log.w(TAG, "stall watchdog: reloading current path=$p to recover wedged source")
         MPVLib.command("loadfile", p)
       }
     }
@@ -2131,13 +2204,17 @@ class PlayerActivity :
     if (isEof) {
       // Guard against spurious end-of-file. mpv raises eof-reached both on a genuine end
       // of file AND when the stream is interrupted (e.g. SMB read error / idle timeout on
-      // long files) or when duration is misprobed. Blindly auto-advancing to the next
-      // episode in those cases skips mid-playback (observed: TCL 3GB TV, long SMB file jumps
-      // to next ~1h in, then the next file loops at 0-0.4s). Only treat it as a real end
-      // when the playhead is actually at/near the reported duration.
+      // long files / TV cache cleared via adb) or when duration is misprobed. Blindly
+      // auto-advancing to the next episode in those cases skips mid-playback (observed:
+      // TCL 3GB TV, long SMB file jumps to next ~1h in; also reproduced by clearing the TV
+      // cache, which kills the SMB socket and makes mpv report duration=0). Treat it as a
+      // real end ONLY when we can positively confirm the playhead reached the end (known
+      // duration AND pos within 5s of it). Otherwise the stream simply died — do NOT
+      // advance; the stall watchdog will rebuild the connection instead.
       val dur = MPVLib.getPropertyDouble("duration") ?: 0.0
       val pos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
-      if (dur > 0.0 && pos < dur - 5.0) {
+      val isRealEnd = dur > 0.0 && pos >= dur - 5.0
+      if (!isRealEnd) {
         Log.w(
           TAG,
           "EOF guard: ignoring spurious end-of-file (pos=${"%.1f".format(pos)}s / " +
