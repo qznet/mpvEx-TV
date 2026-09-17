@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 
@@ -28,6 +29,15 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     // chance to silently drop the TCP while the player is reading from its demuxer cache.
     // Must stay comfortably below typical idle-drop windows (~25s+ observed on this NAS).
     private const val KEEPALIVE_INTERVAL_MS = 15_000L
+
+    // Starvation backstop for the proxied byte stream. If a range response sustains a
+    // throughput below STREAM_MIN_RATE_BPS for longer than STREAM_STARVE_TIMEOUT_MS, the
+    // upstream SMB/FTP/WebDAV connection has silently trickled to a near-stall. Abort the
+    // response so mpv stops waiting on a dead byte source and the player's stall watchdog
+    // + EOF guard can recover. Thresholds are deliberately conservative (a real slow-but-ok
+    // link still plays) and sit well above the client SO_TIMEOUT (15s).
+    private const val STREAM_STARVE_TIMEOUT_MS = 30_000L
+    private const val STREAM_MIN_RATE_BPS = 15 * 1024L   // 15 KB/s sustained floor
 
     @Volatile
     private var instance: NetworkStreamingProxy? = null
@@ -162,6 +172,52 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     clientCache.clear()
   }
 
+  /**
+   * Decorates the network input stream and aborts (throws) when throughput collapses to a
+   * near-stall: no byte is counted as "progress" and the sustained rate over a 5s window
+   * stays below [STREAM_MIN_RATE_BPS] for longer than [STREAM_STARVE_TIMEOUT_MS]. A wedged
+   * or trickling upstream connection then surfaces as a definitive error to NanoHTTPD, which
+   * closes the socket; mpv sees a truncated stream and routes recovery to the player's stall
+   * watchdog / EOF guard. EOF (`read` returns -1) is let through untouched so normal stream
+   * ends still propagate. Normal playback (continuous high-rate reads) never trips this.
+   */
+  private class StallWatchdogInputStream(
+    private val delegate: InputStream,
+    private val starveTimeoutMs: Long = STREAM_STARVE_TIMEOUT_MS,
+    private val minRateBps: Long = STREAM_MIN_RATE_BPS,
+  ) : InputStream() {
+    private var lastByteTime = System.currentTimeMillis()
+    private var windowBytes = 0L
+    private var windowStart = System.currentTimeMillis()
+
+    private fun account(n: Int) {
+      val now = System.currentTimeMillis()
+      if (n > 0) {
+        lastByteTime = now
+        windowBytes += n
+      }
+      if (n == -1) return // EOF: let it propagate as -1, never throw here
+      val elapsed = now - windowStart
+      if (elapsed >= 5000) {
+        val rate = windowBytes * 1000L / elapsed
+        if (rate < minRateBps && (now - lastByteTime) >= starveTimeoutMs) {
+          throw IOException(
+            "NetworkStreamingProxy: stream starved (sustained ${rate}B/s < " +
+              "${minRateBps}B/s for ${elapsed}ms)",
+          )
+        }
+        windowStart = now
+        windowBytes = 0
+      }
+    }
+
+    override fun read(): Int = delegate.read().also { account(it) }
+    override fun read(b: ByteArray, off: Int, len: Int): Int = delegate.read(b, off, len).also { account(it) }
+    override fun close() = delegate.close()
+    override fun available(): Int = delegate.available()
+    override fun skip(n: Long): Long = delegate.skip(n).also { if (it > 0) lastByteTime = System.currentTimeMillis() }
+  }
+
   override fun serve(session: IHTTPSession): Response {
     val uri = session.uri
     val streamId = uri.removePrefix("/").split("/").firstOrNull()
@@ -207,11 +263,12 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       streamInfo.client.getFileStream(streamInfo.filePath, start).getOrNull()
     } ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Failed to open stream")
 
+    val monitored = StallWatchdogInputStream(inputStream)
     val response = if (contentLength > 0) {
-        newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, streamInfo.mimeType, inputStream, contentLength)
+        newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, streamInfo.mimeType, monitored, contentLength)
     } else {
         // Fallback for unknown size
-        newChunkedResponse(Response.Status.PARTIAL_CONTENT, streamInfo.mimeType, inputStream)
+        newChunkedResponse(Response.Status.PARTIAL_CONTENT, streamInfo.mimeType, monitored)
     }
 
     response.addHeader("Accept-Ranges", "bytes")
@@ -234,10 +291,11 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
       streamInfo.client.getFileStream(streamInfo.filePath, 0).getOrNull()
     } ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Failed to open stream")
 
+    val monitored = StallWatchdogInputStream(inputStream)
     val response = if (streamInfo.fileSize > 0) {
-        newFixedLengthResponse(Response.Status.OK, streamInfo.mimeType, inputStream, streamInfo.fileSize)
+        newFixedLengthResponse(Response.Status.OK, streamInfo.mimeType, monitored, streamInfo.fileSize)
     } else {
-        newChunkedResponse(Response.Status.OK, streamInfo.mimeType, inputStream)
+        newChunkedResponse(Response.Status.OK, streamInfo.mimeType, monitored)
     }
 
     response.addHeader("Accept-Ranges", "bytes")
