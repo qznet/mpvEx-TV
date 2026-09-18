@@ -3,6 +3,7 @@ package app.marlboroadvance.mpvex.ui.preferences
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -379,7 +380,30 @@ object AdvancedPreferencesScreen : Screen {
                     color = MaterialTheme.colorScheme.outline,
                   )
                 },
-                onClick = { locationPicker.launch(null) },
+                onClick = {
+                  // Some Android TV firmwares (e.g. TCL on API 28) do not ship a
+                  // picker that handles ACTION_OPEN_DOCUMENT_TREE, so launching it
+                  // throws ActivityNotFoundException and crashes the app. Guard first.
+                  val treeIntent =
+                    Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                      val rootUri =
+                        DocumentsContract.buildRootUri(
+                          "com.android.externalstorage.documents",
+                          "primary",
+                        )
+                      putExtra(DocumentsContract.EXTRA_INITIAL_URI, rootUri)
+                    }
+                  if (treeIntent.resolveActivity(context.packageManager) == null) {
+                    Toast
+                      .makeText(
+                        context,
+                        "本设备未提供系统文件夹选择器（Android TV 常见），配置仍保存在应用内部",
+                        Toast.LENGTH_LONG,
+                      ).show()
+                  } else {
+                    locationPicker.launch(null)
+                  }
+                },
                 iconButtonIcon = { 
                   Icon(
                     Icons.Default.Clear, 
