@@ -2111,13 +2111,17 @@ class PlayerActivity :
     if (isEof) {
       // Guard against spurious end-of-file. mpv raises eof-reached both on a genuine end
       // of file AND when the stream is interrupted (e.g. SMB read error / idle timeout on
-      // long files) or when duration is misprobed. Blindly auto-advancing to the next
-      // episode in those cases skips mid-playback (observed: TCL 3GB TV, long SMB file jumps
-      // to next ~1h in, then the next file loops at 0-0.4s). Only treat it as a real end
-      // when the playhead is actually at/near the reported duration.
+      // long files / TV cache cleared via adb) or when duration is misprobed. Blindly
+      // auto-advancing to the next episode in those cases skips mid-playback (observed:
+      // TCL 3GB TV, long SMB file jumps to next ~1h in; also reproduced by clearing the TV
+      // cache, which kills the SMB socket and makes mpv report duration=0). Treat it as a
+      // real end ONLY when we can positively confirm the playhead reached the end (known
+      // duration AND pos within 5s of it). Otherwise the stream simply died — do NOT
+      // advance.
       val dur = MPVLib.getPropertyDouble("duration") ?: 0.0
       val pos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
-      if (dur > 0.0 && pos < dur - 5.0) {
+      val isRealEnd = dur > 0.0 && pos >= dur - 5.0
+      if (!isRealEnd) {
         Log.w(
           TAG,
           "EOF guard: ignoring spurious end-of-file (pos=${"%.1f".format(pos)}s / " +
