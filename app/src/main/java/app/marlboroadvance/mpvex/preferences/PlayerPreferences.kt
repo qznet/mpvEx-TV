@@ -152,6 +152,15 @@ class PlayerPreferences(
   /** Max cached already-played data in MiB (mpv `demuxer-max-back-bytes`). */
   val demuxerMaxBackBytesMib = preferenceStore.getInt("demuxer_max_back_bytes_mib", 16)
 
+  /** Pause playback when the buffer runs low and resume after it refills (mpv `cache-pause`). */
+  val cachePause = preferenceStore.getBoolean("cache_pause", true)
+
+  /** Seconds the buffer must stay below threshold before pausing (mpv `cache-pause-wait`). */
+  val cachePauseWait = preferenceStore.getInt("cache_pause_wait", 3)
+
+  /** Minimum seconds of cache to build before playback starts / after a seek (mpv `demuxer-cache-wait`). */
+  val demuxerCacheWait = preferenceStore.getInt("demuxer_cache_wait", 1)
+
   /**
    * User-defined Lua buttons shown on the player overlay. Up to 8 fixed slots (L1..L4, R1..R4).
    * Older installs persisted a flat `List<CustomButton>`; the deserializer migrates that

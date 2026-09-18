@@ -286,6 +286,12 @@ object PlayerPreferencesScreen : Screen {
                 value = lowMemoryMode,
                 onValueChange = preferences.lowMemoryMode::set,
                 title = { Text(stringResource(R.string.pref_player_low_memory_mode)) },
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_low_memory_mode_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
               )
 
               PreferenceDivider()
@@ -333,7 +339,7 @@ object PlayerPreferencesScreen : Screen {
                 value = cacheReadaheadSecs.toFloat(),
                 onValueChange = { preferences.cacheReadaheadSecs.set(it.roundToInt()) },
                 title = { Text(stringResource(R.string.pref_player_cache_readahead_secs)) },
-                valueRange = 1f..120f,
+                valueRange = 1f..600f,
                 summary = {
                   Text(
                     stringResource(R.string.pref_player_cache_readahead_secs_summary) +
@@ -361,6 +367,57 @@ object PlayerPreferencesScreen : Screen {
                 },
                 onSliderValueChange = { preferences.cacheSecs.set(it.roundToInt()) },
                 sliderValue = cacheSecs.toFloat(),
+              )
+
+              PreferenceDivider()
+
+              val cachePause by preferences.cachePause.collectAsState()
+              SwitchPreference(
+                value = cachePause,
+                onValueChange = preferences.cachePause::set,
+                title = { Text(stringResource(R.string.pref_player_cache_pause)) },
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_cache_pause_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
+
+              PreferenceDivider()
+
+              val cachePauseWait by preferences.cachePauseWait.collectAsState()
+              SliderPreference(
+                value = cachePauseWait.toFloat(),
+                onValueChange = { preferences.cachePauseWait.set(it.roundToInt()) },
+                title = { Text(stringResource(R.string.pref_player_cache_pause_wait)) },
+                valueRange = 0f..10f,
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_cache_pause_wait_summary) + " ($cachePauseWait s)",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onSliderValueChange = { preferences.cachePauseWait.set(it.roundToInt()) },
+                sliderValue = cachePauseWait.toFloat(),
+              )
+
+              PreferenceDivider()
+
+              val demuxerCacheWait by preferences.demuxerCacheWait.collectAsState()
+              SliderPreference(
+                value = demuxerCacheWait.toFloat(),
+                onValueChange = { preferences.demuxerCacheWait.set(it.roundToInt()) },
+                title = { Text(stringResource(R.string.pref_player_demuxer_cache_wait)) },
+                valueRange = 0f..30f,
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_demuxer_cache_wait_summary) + " ($demuxerCacheWait s)",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onSliderValueChange = { preferences.demuxerCacheWait.set(it.roundToInt()) },
+                sliderValue = demuxerCacheWait.toFloat(),
               )
             }
           }

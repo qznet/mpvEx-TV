@@ -115,17 +115,17 @@ data class ConfigEditorScreen(
 
           if (mpvConfStorageLocation.isNotBlank()) {
             val tree = DocumentFile.fromTreeUri(context, mpvConfStorageLocation.toUri())
-            if (tree == null) {
+            if (tree == null || !tree.canWrite()) {
               withContext(Dispatchers.Main) {
-                Toast.makeText(context, "No storage location set", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "外部存储位置无效，请在设置中重新授权；配置已保存到应用内部", Toast.LENGTH_LONG).show()
               }
               return@launch
             }
             val existing = tree.findFile(fileName)
-            val confFile = existing ?: tree.createFile("text/plain", fileName)?.also { it.renameTo(fileName) }
+            val confFile = existing ?: tree.createFile("text/plain", fileName)
             val uri = confFile?.uri ?: run {
               withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Failed to create file", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "外部存储写入失败，配置已保存到应用内部", Toast.LENGTH_LONG).show()
               }
               return@launch
             }

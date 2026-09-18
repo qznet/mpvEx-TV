@@ -140,15 +140,22 @@
 
   <!-- Cache &amp; memory (low-RAM devices) -->
   <string name="pref_player_cache_memory">Cache &amp; memory</string>
-  <string name="pref_player_low_memory_mode">Low memory mode</string>
+  <string name="pref_player_low_memory_mode">Enable cache</string>
+  <string name="pref_player_low_memory_mode_summary">Turns on mpv caching + cache-pause (anti-stall buffer); off = almost no cache</string>
   <string name="pref_player_demuxer_max_bytes">Max memory cache</string>
   <string name="pref_player_demuxer_max_bytes_summary">Upper bound for the mpv in-memory cache</string>
   <string name="pref_player_demuxer_max_back_bytes">Keep played data</string>
   <string name="pref_player_demuxer_max_back_bytes_summary">How much already-played data stays cached</string>
   <string name="pref_player_cache_readahead_secs">Read-ahead</string>
-  <string name="pref_player_cache_readahead_secs_summary">How far ahead mpv reads</string>
+  <string name="pref_player_cache_readahead_secs_summary">How far ahead the demuxer reads/decodes; deeper read-ahead = fuller buffer</string>
   <string name="pref_player_cache_secs">Forward buffer target</string>
-  <string name="pref_player_cache_secs_summary">Seconds of buffer kept ahead</string>
+  <string name="pref_player_cache_secs_summary">Forward buffer kept ahead of playback; smaller = more likely to pause</string>
+  <string name="pref_player_cache_pause">Cache pause</string>
+  <string name="pref_player_cache_pause_summary">Pause playback when the buffer runs low; resume automatically after it refills</string>
+  <string name="pref_player_cache_pause_wait">Cache pause wait</string>
+  <string name="pref_player_cache_pause_wait_summary">Seconds the buffer must stay low before pausing (avoids pausing on tiny hiccups)</string>
+  <string name="pref_player_demuxer_cache_wait">Start buffer</string>
+  <string name="pref_player_demuxer_cache_wait_summary">Minimum seconds buffered before playback starts or after a seek</string>
   <string name="pref_player_seeking_title">Seeking</string>
   <string name="pref_player_close_after_eof">Close after the end of playback</string>
   <string name="pref_player_remember_brightness">Remember display brightness</string>

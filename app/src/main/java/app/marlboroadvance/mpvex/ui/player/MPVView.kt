@@ -173,8 +173,9 @@ class MPVView(
       MPVLib.setOptionString("cache-secs", forwardSecs.toString())
       MPVLib.setOptionString("cache", "yes")
       // Pause to refill instead of running the buffer dry (graceful stall).
-      MPVLib.setOptionString("cache-pause", "yes")
-      MPVLib.setOptionString("cache-pause-wait", "3")
+      MPVLib.setOptionString("cache-pause", if (playerPreferences.cachePause.get()) "yes" else "no")
+      MPVLib.setOptionString("cache-pause-wait", playerPreferences.cachePauseWait.get().coerceIn(0, 30).toString())
+      MPVLib.setOptionString("demuxer-cache-wait", playerPreferences.demuxerCacheWait.get().coerceIn(0, 60).toString())
     } else {
       // Cap demuxer cache for mobile to prevent memory issues.
       // gpu-next on Android benefits from a slightly deeper queue to reduce
@@ -231,8 +232,9 @@ class MPVView(
     MPVLib.setOptionString("cache", "yes")
     MPVLib.setOptionString("demuxer-readahead-secs", "20")
     MPVLib.setOptionString("cache-secs", "20")
-    MPVLib.setOptionString("cache-pause", "yes")
-    MPVLib.setOptionString("cache-pause-wait", "3")
+    MPVLib.setOptionString("cache-pause", if (playerPreferences.cachePause.get()) "yes" else "no")
+    MPVLib.setOptionString("cache-pause-wait", playerPreferences.cachePauseWait.get().coerceIn(0, 30).toString())
+    MPVLib.setOptionString("demuxer-cache-wait", playerPreferences.demuxerCacheWait.get().coerceIn(0, 60).toString())
   }
 
   override fun observeProperties() {

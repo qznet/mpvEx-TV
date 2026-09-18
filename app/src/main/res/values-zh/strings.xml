@@ -145,15 +145,22 @@
 
   <!-- Cache &amp; memory (low-RAM devices) -->
   <string name="pref_player_cache_memory">缓存与内存</string>
-  <string name="pref_player_low_memory_mode">低内存模式</string>
+  <string name="pref_player_low_memory_mode">启用缓存</string>
+  <string name="pref_player_low_memory_mode_summary">开启 mpv 缓存与抗卡顿缓冲（关闭则基本不缓存）</string>
   <string name="pref_player_demuxer_max_bytes">内存缓存上限</string>
   <string name="pref_player_demuxer_max_bytes_summary">mpv 内存缓存的上限</string>
   <string name="pref_player_demuxer_max_back_bytes">已播放数据保留</string>
   <string name="pref_player_demuxer_max_back_bytes_summary">已播放部分保留的缓存量</string>
   <string name="pref_player_cache_readahead_secs">预读时长</string>
-  <string name="pref_player_cache_readahead_secs_summary">mpv 向前预读的秒数</string>
+  <string name="pref_player_cache_readahead_secs_summary">demuxer 提前读取/解封装的秒数（读得越前缓存越厚）</string>
   <string name="pref_player_cache_secs">前向缓冲目标</string>
-  <string name="pref_player_cache_secs_summary">向前保持的缓冲秒数</string>
+  <string name="pref_player_cache_secs_summary">播放位置前方保持的缓冲秒数（越小越容易触发暂停）</string>
+  <string name="pref_player_cache_pause">缓存暂停</string>
+  <string name="pref_player_cache_pause_summary">缓存不足时暂停播放，补足后自动续播</string>
+  <string name="pref_player_cache_pause_wait">缓存暂停等待</string>
+  <string name="pref_player_cache_pause_wait_summary">缓存低于阈值后等待几秒再暂停，避免瞬间抖动误暂停</string>
+  <string name="pref_player_demuxer_cache_wait">起播缓冲</string>
+  <string name="pref_player_demuxer_cache_wait_summary">开始播放或拖动后至少缓冲多少秒再出画面</string>
   <string name="pref_player_seeking_title">寻道</string>
   <string name="pref_player_close_after_eof">播放结束后关闭</string>
   <string name="pref_player_remember_brightness">记住屏幕亮度</string>
