@@ -140,17 +140,44 @@ class PlayerPreferences(
    */
   val lowMemoryMode = preferenceStore.getBoolean("low_memory_mode", true)
 
-  /** Forward buffer target in seconds (mpv `cache-secs`). */
-  val cacheSecs = preferenceStore.getInt("cache_secs", 10)
+  /**
+   * Forward buffer target in seconds (mpv `cache-secs`).
+   *
+   * Tuned for a ~3GB Android TV box that has roughly 1GB of free RAM during playback:
+   * a 30s forward target plus the larger readahead below gives mpv enough cushion to
+   * ride over transient reader/demuxer stalls instead of draining the buffer to 0 and
+   * freezing. The byte cap in [demuxerMaxBytesMib] is the real bound; at typical
+   * 1080p HEVC bitrates 30s is only ~15MiB, well under it.
+   */
+  val cacheSecs = preferenceStore.getInt("cache_secs", 30)
 
-  /** How far ahead the demuxer reads, in seconds (mpv `demuxer-readahead-secs`). */
-  val cacheReadaheadSecs = preferenceStore.getInt("cache_readahead_secs", 20)
+  /**
+   * How far ahead the demuxer reads, in seconds (mpv `demuxer-readahead-secs`).
+   *
+   * Default raised from 20s to 60s so the demuxer keeps a deeper pre-read queue. On a
+   * 3GB TV this is the single most effective knob against the "buffer slowly shrinks to
+   * 0 and playback stops" symptom, because it lets the decoder keep consuming from the
+   * queue while a brief read hiccup refills it.
+   */
+  val cacheReadaheadSecs = preferenceStore.getInt("cache_readahead_secs", 60)
 
-  /** Max in-memory demuxer cache in MiB (mpv `demuxer-max-bytes`). */
-  val demuxerMaxBytesMib = preferenceStore.getInt("demuxer_max_bytes_mib", 64)
+  /**
+   * Max in-memory demuxer cache in MiB (mpv `demuxer-max-bytes`).
+   *
+   * Default raised from 64 to 256 MiB. On a 3GB TV with ~1GB free during playback, a
+   * 256MiB cap leaves ~750MiB headroom for the decoder + app, so this smooths network
+   * and SMB playback without risking OOM. The UI slider allows up to 512 MiB if the
+   * device has more headroom.
+   */
+  val demuxerMaxBytesMib = preferenceStore.getInt("demuxer_max_bytes_mib", 256)
 
-  /** Max cached already-played data in MiB (mpv `demuxer-max-back-bytes`). */
-  val demuxerMaxBackBytesMib = preferenceStore.getInt("demuxer_max_back_bytes_mib", 16)
+  /**
+   * Max cached already-played data in MiB (mpv `demuxer-max-back-bytes`).
+   *
+   * Default raised from 16 to 64 MiB so seeking backwards within the recent window is
+   * instant and does not trigger a re-read (which is what stalls SMB/local long files).
+   */
+  val demuxerMaxBackBytesMib = preferenceStore.getInt("demuxer_max_back_bytes_mib", 64)
 
   /** Pause playback when the buffer runs low and resume after it refills (mpv `cache-pause`). */
   val cachePause = preferenceStore.getBoolean("cache_pause", true)
