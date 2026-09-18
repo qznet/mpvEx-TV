@@ -873,24 +873,11 @@ class PlayerActivity :
     if (!mpvInitialized || player.isExiting || isFinishing) return
     // No file loaded (idle / pre-load screen) -> nothing to watch.
     if (MPVLib.getPropertyString("path").isNullOrBlank()) return
-    // A paused player is usually not a stall — BUT on a *network* source mpv's own
-    // cache-pause also sets `pause`=true while it waits for the buffer to refill. That
-    // is exactly the "frozen at T, can't seek forward" wedge on SMB/WebDAV. The
-    // differentiator is `paused-for-cache` (true during cache-pause, false on a real
-    // user pause):
-    //   - user pause, or a non-network source -> reset baseline, not a stall (old behaviour)
-    //   - network source + cache-pause         -> fall through so the freeze timer escalates
-    //     to rebuildNetworkSource() (the in-app equivalent of exit-and-reopen)
-    val paused = MPVLib.getPropertyBoolean("pause") == true
-    if (paused) {
-      val pausedForCache = MPVLib.getPropertyBoolean("paused-for-cache") == true
-      val userPaused = !pausedForCache
-      if (userPaused || !isNetworkSource()) {
-        lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: lastProgressTimePos
-        lastProgressMs = System.currentTimeMillis()
-        return
-      }
-      Log.d(TAG, "stall watchdog: network cache-pause detected; monitoring freeze")
+    // Paused (incl. cache-pause refill) is not a stall; just reset baseline.
+    if (MPVLib.getPropertyBoolean("pause") == true) {
+      lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: lastProgressTimePos
+      lastProgressMs = System.currentTimeMillis()
+      return
     }
     val pos = MPVLib.getPropertyDouble("time-pos") ?: return
     val now = System.currentTimeMillis()
@@ -988,14 +975,11 @@ class PlayerActivity :
   private fun rebuildNetworkSource(attempt: Int) {
     // Capture the stuck position BEFORE tearing the proxy down — after stopInstance the
     // time-pos becomes unusable.
-    val stuckPos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
-    // Resume a little PAST the exact stuck point so we don't re-wedge on the same
-    // underfed byte boundary; +2s is enough to force fresh network reads.
-    val resumePos = stuckPos + 2.0
+    val resumePos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
     Log.w(
       TAG,
       "stall watchdog attempt #$attempt: network source wedged at " +
-        "${"%.1f".format(stuckPos)}s; restarting proxy to rebuild SMB connection",
+        "${"%.1f".format(resumePos)}s; restarting proxy to rebuild SMB connection",
     )
     runCatching {
       app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy.stopInstance()
