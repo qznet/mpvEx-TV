@@ -483,6 +483,8 @@ class PlayerViewModel(
           _remainingTime.value = time
           delay(1000)
         }
+        // Sleep timer: treat like a user pause so the stall watchdog leaves it alone.
+        UserPauseState.pausedByApp = true
         MPVLib.setPropertyBoolean("pause", true)
         showToast(host.context.getString(R.string.toast_sleep_timer_ended))
       }
@@ -865,9 +867,11 @@ class PlayerViewModel(
       if (isPaused) {
         // We are about to unpause, so request focus
         withContext(Dispatchers.Main) { host.requestAudioFocus() }
+        UserPauseState.pausedByApp = false
         MPVLib.setPropertyBoolean("pause", false)
       } else {
         // We are about to pause
+        UserPauseState.pausedByApp = true
         MPVLib.setPropertyBoolean("pause", true)
         withContext(Dispatchers.Main) { host.abandonAudioFocus() }
       }
@@ -876,6 +880,7 @@ class PlayerViewModel(
 
   fun pause() {
     viewModelScope.launch(Dispatchers.IO) {
+      UserPauseState.pausedByApp = true
       MPVLib.setPropertyBoolean("pause", true)
       withContext(Dispatchers.Main) { host.abandonAudioFocus() }
     }
@@ -884,6 +889,7 @@ class PlayerViewModel(
   fun unpause() {
     viewModelScope.launch(Dispatchers.IO) {
       withContext(Dispatchers.Main) { host.requestAudioFocus() }
+      UserPauseState.pausedByApp = false
       MPVLib.setPropertyBoolean("pause", false)
     }
   }

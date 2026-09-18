@@ -187,11 +187,13 @@ class MediaPlaybackService :
           object : MediaSessionCompat.Callback() {
             override fun onPlay() {
               Log.d(TAG, "onPlay called")
+              UserPauseState.pausedByApp = false
               MPVLib.setPropertyBoolean("pause", false)
             }
 
             override fun onPause() {
               Log.d(TAG, "onPause called")
+              UserPauseState.pausedByApp = true
               MPVLib.setPropertyBoolean("pause", true)
             }
 

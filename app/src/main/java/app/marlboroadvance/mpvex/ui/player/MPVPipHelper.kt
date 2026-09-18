@@ -55,8 +55,14 @@ class MPVPipHelper(
           val shouldUsePreciseSeeking = playerPreferences.usePreciseSeeking.get() || duration < 120
           val seekMode = if (shouldUsePreciseSeeking) "relative+exact" else "relative+keyframes"
           when (intent?.getIntExtra(PIP_INTENT_ACTION, 0)) {
-            PIP_PLAY -> MPVLib.setPropertyBoolean("pause", false)
-            PIP_PAUSE -> MPVLib.setPropertyBoolean("pause", true)
+            PIP_PLAY -> {
+              UserPauseState.pausedByApp = false
+              MPVLib.setPropertyBoolean("pause", false)
+            }
+            PIP_PAUSE -> {
+              UserPauseState.pausedByApp = true
+              MPVLib.setPropertyBoolean("pause", true)
+            }
             PIP_REWIND -> MPVLib.command("seek", "-10", seekMode)
             PIP_FORWARD -> MPVLib.command("seek", "10", seekMode)
           }

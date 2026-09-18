@@ -77,6 +77,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Main player activity that handles video playback using the MPV library.
@@ -325,10 +329,27 @@ class PlayerActivity :
   private var lastProgressMs = 0L
   private var lastRecoveryMs = 0L
   private var stallAttempts = 0
+  /** How many times we have rebuilt/reloaded the source for the currently loaded file. */
+  private var stallRebuilds = 0
+  /** Set once we have recreated the activity because the mpv core stopped answering. */
+  private var hasRestartedForWedgedMpv = false
+  private var lastHeartbeatMs = 0L
+  /**
+   * The watchdog probes mpv through JNI. If the mpv core wedges, that probe itself blocks
+   * and the watchdog silently dies — which is exactly how the "buffer drains to 0 and never
+   * recovers" freeze went undetected. Every tick therefore runs on a dedicated thread with a
+   * hard timeout; a timeout means "mpv is not answering" and is logged and escalated.
+   */
+  @Volatile
+  private var watchdogExecutor: ExecutorService = Executors.newSingleThreadExecutor()
   private val STALL_WATCHDOG_INTERVAL_MS = 2000L
   private val STALL_THRESHOLD_MS = 10_000L        // > cache-pause 3s window, avoids false trips
-  private val STALL_RECOVERY_COOLDOWN_MS = 20_000L
-  private val STALL_MAX_ATTEMPTS = 3
+  private val STALL_RECOVERY_COOLDOWN_MS = 12_000L
+  private val STALL_MAX_ATTEMPTS = 4              // 1 resume+re-seek, 2 reopen VO, 3 vid cycle, 4 reload source
+  private val STALL_REBUILD_MAX = 2               // source rebuilds per loaded file
+  private val STALL_ROUND_RESET_MS = 120_000L     // after a long quiet round, allow a fresh ladder
+  private val STALL_TICK_TIMEOUT_MS = 3_000L
+  private val STALL_HEARTBEAT_MS = 30_000L
   private var savePlaybackStateJob: kotlinx.coroutines.Job? = null // Track ongoing save job
   private var savePlaybackStateJobIdentifier: String? = null // Media identifier the ongoing save belongs to
   private var audioFocusActive = false // Whether we currently hold audio focus
@@ -854,10 +875,38 @@ class PlayerActivity :
     lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
     lastProgressMs = System.currentTimeMillis()
     stallAttempts = 0
+    stallRebuilds = 0
     stallWatchdogJob = playerScope.launch {
       while (isActive) {
         delay(STALL_WATCHDOG_INTERVAL_MS)
-        runCatching { tickStallWatchdog() }
+        // Run the probe on a dedicated thread with a hard timeout: if the mpv core wedges,
+        // the JNI property query blocks forever and a plain call here would kill the
+        // watchdog silently (exactly the failure mode seen on the TCL TV).
+        val tick =
+          runCatching {
+            watchdogExecutor.submit {
+              runCatching { tickStallWatchdog() }
+                .onFailure { Log.w(TAG, "stall watchdog tick threw", it) }
+            }
+          }.getOrNull() ?: continue
+        val wedged =
+          try {
+            tick.get(STALL_TICK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            false
+          } catch (e: TimeoutException) {
+            true
+          } catch (e: Exception) {
+            Log.w(TAG, "stall watchdog: probe failed", e)
+            false
+          }
+        if (wedged) {
+          tick.cancel(true)
+          Log.w(TAG, "stall watchdog: mpv did not answer within ${STALL_TICK_TIMEOUT_MS}ms - core appears wedged")
+          // That thread is stuck inside libmpv and can never be reused.
+          watchdogExecutor.shutdownNow()
+          watchdogExecutor = Executors.newSingleThreadExecutor()
+          escalateWedgedMpv()
+        }
       }
     }
   }
@@ -869,60 +918,84 @@ class PlayerActivity :
 
   private fun tickStallWatchdog() {
     if (!mpvInitialized || player.isExiting || isFinishing) return
-    // No file loaded (idle / pre-load screen) -> nothing to watch.
-    if (MPVLib.getPropertyString("path").isNullOrBlank()) return
     val now = System.currentTimeMillis()
-    val paused = MPVLib.getPropertyBoolean("pause") == true
-    if (paused) {
-      // Distinguish a genuine user pause from an automatic cache-pause.
-      // cache-pause pauses playback only because the buffer ran low; if the reader
-      // refills it within the grace window mpv auto-resumes and we must not interfere.
-      // But if time-pos stays frozen past the threshold the reader is genuinely not
-      // refilling (local fd stall / network proxy trickle) -> treat as a stall.
-      val pausedForCache = MPVLib.getPropertyBoolean("paused-for-cache") == true
-      if (!pausedForCache) {
-        // Real user pause: not a stall. Keep baseline fresh so we don't false-trip on resume.
-        lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: lastProgressTimePos
-        lastProgressMs = now
-        return
-      }
-      val pos = MPVLib.getPropertyDouble("time-pos") ?: return
-      if (pos - lastProgressTimePos > 0.3) {
-        // cache-pause but still advancing slightly (normal refill jitter) -> fresh baseline.
-        lastProgressTimePos = pos
-        lastProgressMs = now
-        stallAttempts = 0
-        return
-      }
-      // Frozen inside cache-pause: only recover after the grace window + cooldown.
-      if (now - lastProgressMs < STALL_THRESHOLD_MS) return
-      if (now - lastRecoveryMs < STALL_RECOVERY_COOLDOWN_MS) return
-      if (stallAttempts >= STALL_MAX_ATTEMPTS) return
-      lastRecoveryMs = now
-      stallAttempts++
-      Log.w(TAG, "stall watchdog: cache-pause frozen ${stallAttempts}x, recovering playback")
-      recoverFromStall(stallAttempts)
+    // No file loaded (idle / pre-load screen) -> nothing to watch.
+    val path = MPVLib.getPropertyString("path")
+    if (path.isNullOrBlank()) {
+      heartbeat(now, "no media loaded")
       return
     }
-    val pos = MPVLib.getPropertyDouble("time-pos") ?: return
+    val pos = MPVLib.getPropertyDouble("time-pos")
+    if (pos == null) {
+      heartbeat(now, "time-pos unavailable")
+      return
+    }
+    val paused = MPVLib.getPropertyBoolean("pause") == true
+    val pausedByApp = UserPauseState.pausedByApp
+    val pausedForCache = MPVLib.getPropertyBoolean("paused-for-cache") == true
+    if (now - lastHeartbeatMs >= STALL_HEARTBEAT_MS) {
+      lastHeartbeatMs = now
+      Log.d(
+        TAG,
+        "stall watchdog heartbeat: pos=$pos frozen=${(now - lastProgressMs) / 1000}s " +
+          "pause=$paused pausedByApp=$pausedByApp pausedForCache=$pausedForCache " +
+          "attempts=$stallAttempts rebuilds=$stallRebuilds path=$path",
+      )
+    }
     if (pos - lastProgressTimePos > 0.3) {
       // Progressing normally: keep baseline fresh and clear the attempt count.
       lastProgressTimePos = pos
       lastProgressMs = now
       stallAttempts = 0
+      // Playback is moving, so no pause we recorded can still be in effect (self-heals a
+      // stale flag, e.g. after loadfile silently unpauses).
+      UserPauseState.pausedByApp = false
       return
     }
-    // time-pos is frozen while playing. Only act after the grace window and the recovery cooldown.
+    // time-pos is frozen. A pause the user asked for (directly, via PiP, via the
+    // notification or via the sleep timer) is never a stall: keep the baseline fresh so we
+    // do not false-trip while they are paused.
+    if (paused && pausedByApp && !pausedForCache) {
+      lastProgressTimePos = pos
+      lastProgressMs = now
+      return
+    }
+    // Frozen. Only act after the grace window and the recovery cooldown.
     if (now - lastProgressMs < STALL_THRESHOLD_MS) return
     if (now - lastRecoveryMs < STALL_RECOVERY_COOLDOWN_MS) return
-    if (stallAttempts >= STALL_MAX_ATTEMPTS) return
+    if (stallAttempts >= STALL_MAX_ATTEMPTS) {
+      // Ladder exhausted. Rather than silently giving up for the rest of the session (which
+      // is how the old code behaved), allow a fresh ladder after a long quiet period.
+      if (now - lastRecoveryMs < STALL_ROUND_RESET_MS) return
+      stallAttempts = 0
+    }
     lastRecoveryMs = now
     stallAttempts++
+    Log.w(
+      TAG,
+      "stall watchdog: frozen ${(now - lastProgressMs) / 1000}s at $pos " +
+        "(pause=$paused pausedByApp=$pausedByApp pausedForCache=$pausedForCache) -> attempt #$stallAttempts",
+    )
+    // If mpv paused itself (cache-pause, or a starved/wedged stream) resume it first,
+    // otherwise the recovery steps below are issued against a paused player and do nothing.
+    if (paused && !pausedByApp) {
+      runCatching { MPVLib.setPropertyBoolean("pause", false) }
+        .onFailure { Log.w(TAG, "stall watchdog: failed to resume playback", it) }
+      UserPauseState.pausedByApp = false
+    }
     recoverFromStall(stallAttempts)
   }
 
+  /** Periodic liveness log so "the watchdog never ran" can be told apart from "it ran and
+   *  decided not to act" — the absence of this distinction cost several blind debug rounds. */
+  private fun heartbeat(now: Long, detail: String) {
+    if (now - lastHeartbeatMs < STALL_HEARTBEAT_MS) return
+    lastHeartbeatMs = now
+    Log.d(TAG, "stall watchdog heartbeat: $detail (watchdog alive)")
+  }
+
+  /** Rebuild the source and reload at [positionSec]; see [reloadCurrentMediaFrom]. */
   private fun recoverFromStall(attempt: Int) {
-    Log.w(TAG, "stall watchdog attempt #$attempt: time-pos frozen, recovering playback")
     when (attempt) {
       1 -> {
         // Gentlest: re-seek ~0.5s ahead. A relative seek re-initialises the MediaCodec
@@ -940,18 +1013,71 @@ class PlayerActivity :
         // "No Android OSD Surface is attached" race.
         runCatching { player.recoverVideoOutputIfNeeded() }
       }
-      else -> {
-        // Last resort: VO rebuild + force video-track re-selection. The vid no->auto
-        // cycle is required because setting vid=auto while it is already "auto" is a
-        // no-op (mpv drops the re-select) — that is exactly why the earlier single
-        // vid=auto call never restored the track.
+      3 -> {
+        // Last resort before touching the stream: VO rebuild + force video-track
+        // re-selection. The vid no->auto cycle is required because setting vid=auto while
+        // it is already "auto" is a no-op (mpv drops the re-select) — that is exactly why
+        // the earlier single vid=auto call never restored the track.
         runCatching { player.recoverVideoOutputIfNeeded() }
         if (MPVLib.getPropertyInt("video-params/w") == null) {
           MPVLib.setPropertyString("vid", "no")
           MPVLib.setPropertyString("vid", "auto")
         }
       }
+      else -> {
+        // The stream itself is dead. Observed on a TCL TV: the SMB source is proxied over
+        // localhost HTTP, the connection disappears, mpv runs out of buffered data and then
+        // sits there starved — "playing" but time-pos frozen — without ever reporting an
+        // error, so nothing but a reload can revive it.
+        if (stallRebuilds >= STALL_REBUILD_MAX) {
+          Log.w(TAG, "stall watchdog: source rebuild budget exhausted, falling back to vid re-select")
+          runCatching { player.recoverVideoOutputIfNeeded() }
+          MPVLib.setPropertyString("vid", "no")
+          MPVLib.setPropertyString("vid", "auto")
+        } else {
+          stallRebuilds++
+          reloadCurrentMediaFrom(MPVLib.getPropertyDouble("time-pos") ?: lastProgressTimePos)
+        }
+      }
     }
+  }
+
+  /**
+   * Re-issue the currently loaded source and resume a couple of seconds past the stall
+   * point. For SMB/WebDAV the path mpv holds is the local proxy URL, so this re-opens the
+   * stream (a fresh HTTP range request) instead of only nudging the decoder.
+   */
+  private fun reloadCurrentMediaFrom(positionSec: Double) {
+    val uri = MPVLib.getPropertyString("path")?.takeIf { it.isNotBlank() } ?: getPlayableUri(intent)
+    if (uri == null) {
+      Log.w(TAG, "stall watchdog: cannot rebuild source - no playable uri for the current media")
+      return
+    }
+    val resumeAt = positionSec + 2.0
+    Log.w(TAG, "stall watchdog: rebuilding source (rebuild #$stallRebuilds), resuming at ${resumeAt}s")
+    runCatching { MPVLib.command("loadfile", uri) }
+      .onFailure { Log.w(TAG, "stall watchdog: loadfile failed", it) }
+    playerScope.launch {
+      delay(2000)
+      runCatching { MPVLib.command("seek", resumeAt.toString(), "absolute") }
+      runCatching { MPVLib.setPropertyBoolean("pause", false) }
+      // Rebase the watchdog so a slow reload is not immediately read as another stall.
+      lastProgressTimePos = resumeAt
+      lastProgressMs = System.currentTimeMillis()
+      lastRecoveryMs = System.currentTimeMillis()
+    }
+  }
+
+  /** mpv stopped answering property queries entirely: only a fresh mpv instance can help. */
+  private fun escalateWedgedMpv() {
+    if (hasRestartedForWedgedMpv) {
+      Log.w(TAG, "stall watchdog: mpv still not answering but the activity was already recreated once; not retrying")
+      return
+    }
+    hasRestartedForWedgedMpv = true
+    runCatching { saveVideoPlaybackState(fileName) }
+    Log.w(TAG, "stall watchdog: recreating PlayerActivity to obtain a fresh mpv instance")
+    playerScope.launch(Dispatchers.Main) { runCatching { recreate() } }
   }
 
   override fun abandonAudioFocus() {
@@ -1212,6 +1338,9 @@ class PlayerActivity :
     player.initialize(filesDir.path, cacheDir.path)
     mpvInitialized = true
     Log.d(TAG, "MPV initialized")
+    // Do not rely on onResume() alone: if the watchdog never starts there is no recovery at
+    // all, and a silent no-op there cost several blind debug rounds. Idempotent.
+    startStallWatchdog()
 
     // Make the app's filesDir the runtime target for custom Lua buttons and run any
     // startup scripts once mpv is ready to receive script-message commands.
