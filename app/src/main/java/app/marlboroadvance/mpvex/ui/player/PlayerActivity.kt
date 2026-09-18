@@ -871,14 +871,40 @@ class PlayerActivity :
     if (!mpvInitialized || player.isExiting || isFinishing) return
     // No file loaded (idle / pre-load screen) -> nothing to watch.
     if (MPVLib.getPropertyString("path").isNullOrBlank()) return
-    // Paused (incl. cache-pause refill) is not a stall; just reset baseline.
-    if (MPVLib.getPropertyBoolean("pause") == true) {
-      lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: lastProgressTimePos
-      lastProgressMs = System.currentTimeMillis()
+    val now = System.currentTimeMillis()
+    val paused = MPVLib.getPropertyBoolean("pause") == true
+    if (paused) {
+      // Distinguish a genuine user pause from an automatic cache-pause.
+      // cache-pause pauses playback only because the buffer ran low; if the reader
+      // refills it within the grace window mpv auto-resumes and we must not interfere.
+      // But if time-pos stays frozen past the threshold the reader is genuinely not
+      // refilling (local fd stall / network proxy trickle) -> treat as a stall.
+      val pausedForCache = MPVLib.getPropertyBoolean("paused-for-cache") == true
+      if (!pausedForCache) {
+        // Real user pause: not a stall. Keep baseline fresh so we don't false-trip on resume.
+        lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: lastProgressTimePos
+        lastProgressMs = now
+        return
+      }
+      val pos = MPVLib.getPropertyDouble("time-pos") ?: return
+      if (pos - lastProgressTimePos > 0.3) {
+        // cache-pause but still advancing slightly (normal refill jitter) -> fresh baseline.
+        lastProgressTimePos = pos
+        lastProgressMs = now
+        stallAttempts = 0
+        return
+      }
+      // Frozen inside cache-pause: only recover after the grace window + cooldown.
+      if (now - lastProgressMs < STALL_THRESHOLD_MS) return
+      if (now - lastRecoveryMs < STALL_RECOVERY_COOLDOWN_MS) return
+      if (stallAttempts >= STALL_MAX_ATTEMPTS) return
+      lastRecoveryMs = now
+      stallAttempts++
+      Log.w(TAG, "stall watchdog: cache-pause frozen ${stallAttempts}x, recovering playback")
+      recoverFromStall(stallAttempts)
       return
     }
     val pos = MPVLib.getPropertyDouble("time-pos") ?: return
-    val now = System.currentTimeMillis()
     if (pos - lastProgressTimePos > 0.3) {
       // Progressing normally: keep baseline fresh and clear the attempt count.
       lastProgressTimePos = pos
@@ -886,7 +912,7 @@ class PlayerActivity :
       stallAttempts = 0
       return
     }
-    // time-pos is frozen. Only act after the grace window and the recovery cooldown.
+    // time-pos is frozen while playing. Only act after the grace window and the recovery cooldown.
     if (now - lastProgressMs < STALL_THRESHOLD_MS) return
     if (now - lastRecoveryMs < STALL_RECOVERY_COOLDOWN_MS) return
     if (stallAttempts >= STALL_MAX_ATTEMPTS) return
