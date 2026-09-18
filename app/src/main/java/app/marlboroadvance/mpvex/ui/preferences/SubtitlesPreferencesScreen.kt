@@ -1,11 +1,14 @@
 package app.marlboroadvance.mpvex.ui.preferences
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.documentfile.provider.DocumentFile
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import app.marlboroadvance.mpvex.utils.media.OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE
 import app.marlboroadvance.mpvex.utils.media.OpenDocumentTreeContract
+import app.marlboroadvance.mpvex.utils.media.canResolveOpenDocumentTree
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -268,7 +271,18 @@ object SubtitlesPreferencesScreen : Screen {
                 modifier =
                   Modifier
                     .fillMaxWidth()
-                    .clickable { locationPicker.launch(null) }
+                    .clickable {
+                      if (context.canResolveOpenDocumentTree()) {
+                        locationPicker.launch(null)
+                      } else {
+                        Toast
+                          .makeText(
+                            context,
+                            OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE,
+                            Toast.LENGTH_LONG,
+                          ).show()
+                      }
+                    }
                     .padding(vertical = 16.dp, horizontal = 16.dp),
               ) {
                 Row(
@@ -368,7 +382,18 @@ object SubtitlesPreferencesScreen : Screen {
               Box(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .clickable { saveLocationPicker.launch(null) }
+                  .clickable {
+                    if (context.canResolveOpenDocumentTree()) {
+                      saveLocationPicker.launch(null)
+                    } else {
+                      Toast
+                        .makeText(
+                          context,
+                          OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE,
+                          Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                  }
                   .padding(vertical = 16.dp, horizontal = 16.dp),
               ) {
                 Column {

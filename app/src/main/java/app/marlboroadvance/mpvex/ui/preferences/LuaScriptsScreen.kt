@@ -60,7 +60,9 @@ import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
 import app.marlboroadvance.mpvex.utils.ScriptRepository
+import app.marlboroadvance.mpvex.utils.media.OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE
 import app.marlboroadvance.mpvex.utils.media.OpenDocumentTreeContract
+import app.marlboroadvance.mpvex.utils.media.canResolveOpenDocumentTree
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -279,7 +281,15 @@ object LuaScriptsScreen : Screen {
                   Text(text = "新建脚本")
                 }
                 OutlinedButton(
-                  onClick = { scriptsDirPicker.launch(null) },
+                  onClick = {
+                  if (context.canResolveOpenDocumentTree()) {
+                    scriptsDirPicker.launch(null)
+                  } else {
+                    Toast
+                      .makeText(context, OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE, Toast.LENGTH_LONG)
+                      .show()
+                  }
+                },
                 ) {
                   Icon(
                     Icons.Outlined.FolderOpen,

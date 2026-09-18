@@ -1108,3 +1108,27 @@ class OpenDocumentTreeContract : ActivityResultContract<Uri?, Uri?>() {
     return intent?.data
   }
 }
+
+/**
+ * Whether the system provides any activity that can handle [Intent.ACTION_OPEN_DOCUMENT_TREE].
+ *
+ * Some Android TV firmwares (e.g. TCL on API 28) do not ship such a picker. Launching the tree
+ * contract there throws [android.content.ActivityNotFoundException] and crashes the app, so every
+ * caller must guard with this before [androidx.activity.result.ActivityResultLauncher.launch].
+ */
+fun Context.canResolveOpenDocumentTree(): Boolean {
+  val intent =
+    Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+      val rootUri =
+        DocumentsContract.buildRootUri("com.android.externalstorage.documents", "primary")
+      putExtra(DocumentsContract.EXTRA_INITIAL_URI, rootUri)
+    }
+  return intent.resolveActivity(packageManager) != null
+}
+
+/**
+ * Toast shown when [ACTION_OPEN_DOCUMENT_TREE] has no system picker (common on Android TV).
+ * Callers should show this and skip the launch instead of crashing.
+ */
+const val OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE =
+  "本设备未提供系统文件夹选择器（Android TV 常见），配置仍保存在应用内部"

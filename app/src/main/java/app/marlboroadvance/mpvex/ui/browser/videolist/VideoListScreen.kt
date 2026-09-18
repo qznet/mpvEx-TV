@@ -2,12 +2,15 @@ package app.marlboroadvance.mpvex.ui.browser.videolist
 
 import android.content.Intent
 import android.os.Environment
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import app.marlboroadvance.mpvex.utils.media.OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE
 import app.marlboroadvance.mpvex.utils.media.OpenDocumentTreeContract
+import app.marlboroadvance.mpvex.utils.media.canResolveOpenDocumentTree
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Arrangement
@@ -402,7 +405,13 @@ data class VideoListScreen(
               if (CopyPasteOps.canUseDirectFileOperations()) {
                 folderPickerOpen.value = true
               } else {
-                treePickerLauncher.launch(null)
+                if (context.canResolveOpenDocumentTree()) {
+                  treePickerLauncher.launch(null)
+                } else {
+                  Toast
+                    .makeText(context, OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE, Toast.LENGTH_LONG)
+                    .show()
+                }
               }
             },
             onMoveClick = {
@@ -410,7 +419,13 @@ data class VideoListScreen(
               if (CopyPasteOps.canUseDirectFileOperations()) {
                 folderPickerOpen.value = true
               } else {
-                treePickerLauncher.launch(null)
+                if (context.canResolveOpenDocumentTree()) {
+                  treePickerLauncher.launch(null)
+                } else {
+                  Toast
+                    .makeText(context, OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE, Toast.LENGTH_LONG)
+                    .show()
+                }
               }
             },
             onRenameClick = { renameDialogOpen.value = true },

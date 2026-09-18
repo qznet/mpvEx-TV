@@ -3,6 +3,7 @@ package app.marlboroadvance.mpvex.ui.browser.filesystem
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,7 +11,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import app.marlboroadvance.mpvex.utils.media.OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE
 import app.marlboroadvance.mpvex.utils.media.OpenDocumentTreeContract
+import app.marlboroadvance.mpvex.utils.media.canResolveOpenDocumentTree
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -926,7 +929,13 @@ fun FileSystemBrowserScreen(path: String? = null) {
           if (CopyPasteOps.canUseDirectFileOperations()) {
             folderPickerOpen.value = true
           } else {
-            treePickerLauncher.launch(null)
+            if (context.canResolveOpenDocumentTree()) {
+              treePickerLauncher.launch(null)
+            } else {
+              Toast
+                .makeText(context, OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE, Toast.LENGTH_LONG)
+                .show()
+            }
           }
         },
         onMoveClick = {
@@ -934,7 +943,13 @@ fun FileSystemBrowserScreen(path: String? = null) {
           if (CopyPasteOps.canUseDirectFileOperations()) {
             folderPickerOpen.value = true
           } else {
-            treePickerLauncher.launch(null)
+            if (context.canResolveOpenDocumentTree()) {
+              treePickerLauncher.launch(null)
+            } else {
+              Toast
+                .makeText(context, OPEN_DOCUMENT_TREE_UNAVAILABLE_MESSAGE, Toast.LENGTH_LONG)
+                .show()
+            }
           }
         },
         onRenameClick = { renameDialogOpen.value = true },
