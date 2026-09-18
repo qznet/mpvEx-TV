@@ -318,18 +318,17 @@ class PlayerActivity :
   // mpv's event loop is stuck in the mediacodec_embed / MediaCodec path so even
   // MPVLib.destroy() cannot run. This watchdog polls time-pos; if playback is not
   // paused yet time-pos has not advanced for STALL_THRESHOLD_MS it escalates a
-  // recovery (re-seek -> reopen VO -> vid re-select -> reload source), spaced by a
-  // cooldown and capped, so a hard deadlock is never turned into a thrash loop.
+  // recovery (re-seek -> reopen VO -> vid re-select), spaced by a cooldown and
+  // capped, so a hard deadlock is never turned into a thrash loop.
   private var stallWatchdogJob: Job? = null
   private var lastProgressTimePos = 0.0
   private var lastProgressMs = 0L
   private var lastRecoveryMs = 0L
   private var stallAttempts = 0
-  private var stallExhausted = false
   private val STALL_WATCHDOG_INTERVAL_MS = 2000L
   private val STALL_THRESHOLD_MS = 10_000L        // > cache-pause 3s window, avoids false trips
   private val STALL_RECOVERY_COOLDOWN_MS = 20_000L
-  private val STALL_MAX_ATTEMPTS = 4               // 1:re-seek 2:reopen VO 3:vid re-select 4:reload source
+  private val STALL_MAX_ATTEMPTS = 3
   private var savePlaybackStateJob: kotlinx.coroutines.Job? = null // Track ongoing save job
   private var savePlaybackStateJobIdentifier: String? = null // Media identifier the ongoing save belongs to
   private var audioFocusActive = false // Whether we currently hold audio focus
@@ -855,7 +854,6 @@ class PlayerActivity :
     lastProgressTimePos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
     lastProgressMs = System.currentTimeMillis()
     stallAttempts = 0
-    stallExhausted = false
     stallWatchdogJob = playerScope.launch {
       while (isActive) {
         delay(STALL_WATCHDOG_INTERVAL_MS)
@@ -891,13 +889,7 @@ class PlayerActivity :
     // time-pos is frozen. Only act after the grace window and the recovery cooldown.
     if (now - lastProgressMs < STALL_THRESHOLD_MS) return
     if (now - lastRecoveryMs < STALL_RECOVERY_COOLDOWN_MS) return
-    if (stallAttempts >= STALL_MAX_ATTEMPTS) {
-      if (!stallExhausted) {
-        stallExhausted = true
-        Log.e(TAG, "stall watchdog: exhausted $STALL_MAX_ATTEMPTS recovery attempts; manual restart required")
-      }
-      return
-    }
+    if (stallAttempts >= STALL_MAX_ATTEMPTS) return
     lastRecoveryMs = now
     stallAttempts++
     recoverFromStall(stallAttempts)
@@ -922,10 +914,10 @@ class PlayerActivity :
         // "No Android OSD Surface is attached" race.
         runCatching { player.recoverVideoOutputIfNeeded() }
       }
-      3 -> {
-        // VO rebuild + force video-track re-selection. The vid no->auto cycle is
-        // required because setting vid=auto while it is already "auto" is a no-op
-        // (mpv drops the re-select) — that is exactly why the earlier single
+      else -> {
+        // Last resort: VO rebuild + force video-track re-selection. The vid no->auto
+        // cycle is required because setting vid=auto while it is already "auto" is a
+        // no-op (mpv drops the re-select) — that is exactly why the earlier single
         // vid=auto call never restored the track.
         runCatching { player.recoverVideoOutputIfNeeded() }
         if (MPVLib.getPropertyInt("video-params/w") == null) {
@@ -933,44 +925,6 @@ class PlayerActivity :
           MPVLib.setPropertyString("vid", "auto")
         }
       }
-      4 -> {
-        // Final resort: the stream itself is wedged (e.g. dead SMB/WebDAV socket),
-        // so re-seek / VO / vid recoveries cannot fetch any data — the playhead
-        // snaps back to the frozen point (exactly the "drag the bar, it returns"
-        // symptom). The only fix is to tear down and re-open the source, which is
-        // what the user does by exiting and re-entering. loadPlaylistItem() rebuilds
-        // the SMB connection and, via saveVideoPlaybackState/restore, resumes at the
-        // stuck position.
-        reloadCurrentMedia()
-      }
-    }
-  }
-
-  /**
-   * Tear down and re-open the current media source. Used as the last stall-recovery
-   * tier when the underlying network stream has wedged: re-seek / VO rebuild / vid
-   * re-select all operate on an unreadable source and cannot help, but a fresh
-   * loadfile re-establishes the SMB/WebDAV connection. Mirrors the user's manual
-   * "exit and reopen" that reliably clears the soft stall.
-   */
-  private fun reloadCurrentMedia() {
-    val resumePos = MPVLib.getPropertyDouble("time-pos") ?: 0.0
-    val idx = playlistIndex
-    if (playlist.isNotEmpty() && idx in playlist.indices) {
-      Log.w(TAG, "stall watchdog: reloading current media (index=$idx) to recover wedged stream")
-      loadPlaylistItem(idx)
-    } else {
-      // Single-file / no playlist: re-open whatever mpv currently has loaded.
-      val p = MPVLib.getPropertyString("path")
-      if (!p.isNullOrBlank()) {
-        Log.w(TAG, "stall watchdog: reloading current path=$p to recover wedged stream")
-        MPVLib.command("loadfile", p)
-      }
-    }
-    // Best-effort: snap back to the exact stuck point once the (re)load has buffered.
-    lifecycleScope.launch(Dispatchers.IO) {
-      delay(2000)
-      runCatching { MPVLib.command("seek", resumePos.toString(), "absolute+exact") }
     }
   }
 
