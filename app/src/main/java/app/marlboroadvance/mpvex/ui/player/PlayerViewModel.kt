@@ -861,7 +861,16 @@ class PlayerViewModel(
 
   // ==================== Playback Control ====================
 
+  private var lastPauseToggleMs = 0L
   fun pauseUnpause() {
+    val now = System.currentTimeMillis()
+    if (now - lastPauseToggleMs < 500) {
+      // Ignore re-entrant delivery of the same media key. On Android TV the play/pause
+      // button can be routed to BOTH the Activity and the MediaSession, so one press would
+      // toggle twice and cancel the user's intent (manual pause auto-resumes).
+      return
+    }
+    lastPauseToggleMs = now
     viewModelScope.launch(Dispatchers.IO) {
       val isPaused = MPVLib.getPropertyBoolean("pause") ?: false
       if (isPaused) {
