@@ -3784,6 +3784,33 @@ class PlayerActivity :
         return true
       }
 
+      KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+        // Route through the app so UserPauseState is set; otherwise mpv toggles pause
+        // directly (KeyMapping binds this key to PLAYPAUSE) and the stall watchdog
+        // mistakes a manual pause for a stall, then auto-resumes the video.
+        viewModel.pauseUnpause()
+        return true
+      }
+
+      KeyEvent.KEYCODE_MEDIA_PLAY -> {
+        viewModel.unpause()
+        return true
+      }
+
+      KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+        viewModel.pause()
+        return true
+      }
+
+      KeyEvent.KEYCODE_0, KeyEvent.KEYCODE_NUMPAD_0,
+      KeyEvent.KEYCODE_8, KeyEvent.KEYCODE_NUMPAD_8 -> {
+        // These digits are bound in input.conf to `cycle pause`, which toggles mpv pause
+        // directly and bypasses UserPauseState; route them through the app instead so a
+        // manual pause is never mis-read as a stall by the watchdog.
+        viewModel.pauseUnpause()
+        return true
+      }
+
       else -> {
         event?.let { player.onKey(it) }
         return super.onKeyDown(keyCode, event)
@@ -3802,6 +3829,14 @@ class PlayerActivity :
     keyCode: Int,
     event: KeyEvent?,
   ): Boolean {
+    // Consume media transport keys here too: mpv's KeyMapping would otherwise toggle
+    // pause on key-up and defeat the UserPauseState bookkeeping done in onKeyDown.
+    if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+        keyCode == KeyEvent.KEYCODE_MEDIA_PLAY ||
+        keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE
+    ) {
+      return true
+    }
     event?.let {
       if (player.onKey(it)) return true
     }
