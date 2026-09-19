@@ -953,9 +953,13 @@ class PlayerActivity :
       return
     }
     // time-pos is frozen. A pause the user asked for (directly, via PiP, via the
-    // notification or via the sleep timer) is never a stall: keep the baseline fresh so we
-    // do not false-trip while they are paused.
-    if (paused && pausedByApp && !pausedForCache) {
+    // notification or via the sleep timer) is NEVER a stall, regardless of the mpv
+    // `paused-for-cache` flag: if the app paused on the user's behalf we must never
+    // auto-resume or run the recovery ladder. `paused-for-cache` can be true at the
+    // same instant the user pauses (cache-pause is enabled for every source), and
+    // treating that as a stall made the watchdog resume a manually-paused video and
+    // then re-open the file (observed: phone local playback auto-resumed + jumped).
+    if (paused && pausedByApp) {
       lastProgressTimePos = pos
       lastProgressMs = now
       return
@@ -998,11 +1002,14 @@ class PlayerActivity :
   private fun recoverFromStall(attempt: Int) {
     when (attempt) {
       1 -> {
-        // Gentlest: re-seek ~0.5s ahead. A relative seek re-initialises the MediaCodec
-        // decoder at the nearest keyframe without touching the VO or the video track,
-        // which clears many transient codec stalls.
-        val target = (MPVLib.getPropertyDouble("time-pos") ?: 0.0) + 0.5
-        runCatching { MPVLib.command("seek", target.toString(), "relative+exact") }
+        // Gentlest: nudge ~0.5s ahead to re-initialise the MediaCodec decoder at the
+        // nearest keyframe without touching the VO or the video track.
+        // NOTE: with a RELATIVE seek mpv treats the target as the OFFSET, not as an
+        // absolute position. This used to pass (time-pos + 0.5), so mpv added the
+        // current position to itself — on the TCL TV that moved 1112s -> 2226s (the
+        // position roughly doubled) and the user saw it as "auto fast-forward to much
+        // later" right after a manual pause. The offset must stay small.
+        runCatching { MPVLib.command("seek", "0.5", "relative+exact") }
       }
       2 -> {
         // Rebuild the video output. reopenVo() forces vo=null then back to
