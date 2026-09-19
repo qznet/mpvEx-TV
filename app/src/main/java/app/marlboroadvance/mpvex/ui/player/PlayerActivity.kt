@@ -335,6 +335,10 @@ class PlayerActivity :
   private var lastProgressMs = 0L
   private var lastRecoveryMs = 0L
   private var stallAttempts = 0
+  /** Consecutive watchdog probes that mpv failed to answer inside the tick timeout. */
+  private var stallWedgedTimeouts = 0
+  /** Set once the "recovery gave up" notice has been shown for the current stall episode. */
+  private var stallGaveUpNotified = false
   /** How many times we have rebuilt/reloaded the source for the currently loaded file. */
   private var stallRebuilds = 0
   /** Set once we have recreated the activity because the mpv core stopped answering. */
@@ -349,12 +353,18 @@ class PlayerActivity :
   @Volatile
   private var watchdogExecutor: ExecutorService = Executors.newSingleThreadExecutor()
   private val STALL_WATCHDOG_INTERVAL_MS = 2000L
-  private val STALL_THRESHOLD_MS = 10_000L        // > cache-pause 3s window, avoids false trips
+  // A stall must outlast a slow SMB read plus the `cache-pause` window. 10s tripped on
+  // ordinary network jitter and turned a hiccup into a recovery; 20s does not.
+  private val STALL_THRESHOLD_MS = 20_000L
   private val STALL_RECOVERY_COOLDOWN_MS = 12_000L
-  private val STALL_MAX_ATTEMPTS = 4              // 1 resume+re-seek, 2 reopen VO, 3 vid cycle, 4 reload source
+  private val STALL_MAX_ATTEMPTS = 4              // 1 nudge, 2/3 reload source, 4 give up
   private val STALL_REBUILD_MAX = 2               // source rebuilds per loaded file
   private val STALL_ROUND_RESET_MS = 120_000L     // after a long quiet round, allow a fresh ladder
-  private val STALL_TICK_TIMEOUT_MS = 3_000L
+  // The probe timeout must be generous: a busy demuxer (opening a large SMB file) can take
+  // seconds to answer without being wedged.
+  private val STALL_TICK_TIMEOUT_MS = 6_000L
+  /** Escalating recreates the Activity (restarts playback), so require repeated timeouts. */
+  private val STALL_WEDGED_TIMEOUTS = 2
   private val STALL_HEARTBEAT_MS = 30_000L
   private var savePlaybackStateJob: kotlinx.coroutines.Job? = null // Track ongoing save job
   private var savePlaybackStateJobIdentifier: String? = null // Media identifier the ongoing save belongs to
@@ -882,6 +892,8 @@ class PlayerActivity :
     lastProgressMs = System.currentTimeMillis()
     stallAttempts = 0
     stallRebuilds = 0
+    stallWedgedTimeouts = 0
+    stallGaveUpNotified = false
     stallWatchdogJob = playerScope.launch {
       while (isActive) {
         delay(STALL_WATCHDOG_INTERVAL_MS)
@@ -922,11 +934,6 @@ class PlayerActivity :
           if (stallWedgedTimeouts >= STALL_WEDGED_TIMEOUTS) escalateWedgedMpv()
         } else {
           stallWedgedTimeouts = 0
-        }
-          // That thread is stuck inside libmpv and can never be reused.
-          watchdogExecutor.shutdownNow()
-          watchdogExecutor = Executors.newSingleThreadExecutor()
-          escalateWedgedMpv()
         }
       }
     }
