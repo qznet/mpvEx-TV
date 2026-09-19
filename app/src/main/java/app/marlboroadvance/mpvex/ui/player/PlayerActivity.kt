@@ -320,10 +320,16 @@ class PlayerActivity :
   // Random black-screen freeze on low-RAM TV boxes (e.g. TCL Android 9, 3GB): the
   // video freezes, the app cannot be exited, and memory is fine (~60% at death) —
   // mpv's event loop is stuck in the mediacodec_embed / MediaCodec path so even
-  // MPVLib.destroy() cannot run. This watchdog polls time-pos; if playback is not
-  // paused yet time-pos has not advanced for STALL_THRESHOLD_MS it escalates a
-  // recovery (re-seek -> reopen VO -> vid re-select), spaced by a cooldown and
-  // capped, so a hard deadlock is never turned into a thrash loop.
+  // MPVLib.destroy() cannot run. This watchdog polls time-pos; if time-pos has not
+  // advanced for STALL_THRESHOLD_MS it nudges the decoder and, failing that, reloads
+  // the source — spaced by a cooldown and capped, so a hard deadlock is never turned
+  // into a thrash loop.
+  //
+  // Every recovery step here is deliberately NON-DESTRUCTIVE: if it does not help, the
+  // viewer must not be able to tell that it ran. Rebuilding the VO (vo=null back to
+  // mediacodec_embed) and cycling `vid` no/auto are gone for good — on the TCL TV those
+  // two permanently desynced audio, video and subtitles, and a recovery that breaks
+  // playback is worse than the freeze it was meant to cure.
   private var stallWatchdogJob: Job? = null
   private var lastProgressTimePos = 0.0
   private var lastProgressMs = 0L
@@ -901,7 +907,22 @@ class PlayerActivity :
           }
         if (wedged) {
           tick.cancel(true)
-          Log.w(TAG, "stall watchdog: mpv did not answer within ${STALL_TICK_TIMEOUT_MS}ms - core appears wedged")
+          // That thread is stuck inside libmpv and can never be reused.
+          watchdogExecutor.shutdownNow()
+          watchdogExecutor = Executors.newSingleThreadExecutor()
+          stallWedgedTimeouts++
+          Log.w(
+            TAG,
+            "stall watchdog: mpv did not answer within ${STALL_TICK_TIMEOUT_MS}ms " +
+              "($stallWedgedTimeouts/$STALL_WEDGED_TIMEOUTS consecutive) - core may be wedged",
+          )
+          // One unanswered probe can be nothing more than a busy demuxer (slow SMB open).
+          // Escalating recreates the Activity, which restarts playback from the saved
+          // position, so require repeated timeouts before paying that price.
+          if (stallWedgedTimeouts >= STALL_WEDGED_TIMEOUTS) escalateWedgedMpv()
+        } else {
+          stallWedgedTimeouts = 0
+        }
           // That thread is stuck inside libmpv and can never be reused.
           watchdogExecutor.shutdownNow()
           watchdogExecutor = Executors.newSingleThreadExecutor()
@@ -964,6 +985,20 @@ class PlayerActivity :
       lastProgressMs = now
       return
     }
+    // Structural guard, independent of our own bookkeeping: `cache-pause` is the only way
+    // mpv pauses itself, and while it holds playback it always raises `paused-for-cache`.
+    // So a pause with a healthy cache can only mean "someone deliberately paused this" —
+    // the viewer, the notification, PiP, the sleep timer or our own background logic.
+    // Never second-guess that, whatever `pausedByApp` happens to say. Relying on the flag
+    // alone kept letting manual pauses through (the media key is delivered down several
+    // paths, and a race between them cleared the flag), after which the watchdog resumed
+    // the video and ran the recovery ladder on top of it — the reported
+    // "I pressed pause and it started playing again / jumped ahead".
+    if (paused && !pausedForCache) {
+      lastProgressTimePos = pos
+      lastProgressMs = now
+      return
+    }
     // Frozen. Only act after the grace window and the recovery cooldown.
     if (now - lastProgressMs < STALL_THRESHOLD_MS) return
     if (now - lastRecoveryMs < STALL_RECOVERY_COOLDOWN_MS) return
@@ -980,12 +1015,25 @@ class PlayerActivity :
       "stall watchdog: frozen ${(now - lastProgressMs) / 1000}s at $pos " +
         "(pause=$paused pausedByApp=$pausedByApp pausedForCache=$pausedForCache) -> attempt #$stallAttempts",
     )
-    // If mpv paused itself (cache-pause, or a starved/wedged stream) resume it first,
-    // otherwise the recovery steps below are issued against a paused player and do nothing.
-    if (paused && !pausedByApp) {
+    // Reached only when mpv paused itself for the cache (every deliberate pause returned
+    // above), so resume first: the recovery steps below would be issued against a paused
+    // player and do nothing.
+    if (paused) {
       runCatching { MPVLib.setPropertyBoolean("pause", false) }
         .onFailure { Log.w(TAG, "stall watchdog: failed to resume playback", it) }
       UserPauseState.pausedByApp = false
+    }
+    // This TV's logd drops every Java log line the app writes, so a Toast is the only
+    // feedback that lets the viewer tell "the watchdog is acting" apart from "nothing
+    // happened" while the freeze is being recovered.
+    runOnUiThread {
+      android.widget.Toast
+        .makeText(
+          this,
+          if (stallAttempts <= 1) "播放卡住，正在自动恢复…" else "仍无画面，正在重新加载片源…",
+          android.widget.Toast.LENGTH_SHORT,
+        )
+        .show()
     }
     recoverFromStall(stallAttempts)
   }
@@ -1000,6 +1048,12 @@ class PlayerActivity :
 
   /** Rebuild the source and reload at [positionSec]; see [reloadCurrentMediaFrom]. */
   private fun recoverFromStall(attempt: Int) {
+    // A source reload is the only heavier step left, and it is capped per loaded file. Once
+    // the budget is gone, stop rather than escalate into VO/decoder surgery.
+    if (attempt >= 2 && stallRebuilds >= STALL_REBUILD_MAX) {
+      notifyRecoveryGaveUp()
+      return
+    }
     when (attempt) {
       1 -> {
         // Gentlest: nudge ~0.5s ahead to re-initialise the MediaCodec decoder at the
@@ -1011,45 +1065,36 @@ class PlayerActivity :
         // later" right after a manual pause. The offset must stay small.
         runCatching { MPVLib.command("seek", "0.5", "relative+exact") }
       }
-      2 -> {
-        // Rebuild the video output. reopenVo() forces vo=null then back to
-        // mediacodec_embed, tearing down and rebuilding the broken VO even when its
-        // value is already "mediacodec_embed" (avoids the "set same vo = no-op" trap).
-        // recoverVideoOutputIfNeeded() also no-ops safely when the OSD surface is not
-        // yet a real window, so it cannot re-trigger the old
-        // "No Android OSD Surface is attached" race.
-        runCatching { player.recoverVideoOutputIfNeeded() }
-      }
-      3 -> {
-        // Last resort before touching the stream: VO rebuild + force video-track
-        // re-selection. The vid no->auto cycle is required because setting vid=auto while
-        // it is already "auto" is a no-op (mpv drops the re-select) — that is exactly why
-        // the earlier single vid=auto call never restored the track.
-        runCatching { player.recoverVideoOutputIfNeeded() }
-        if (MPVLib.getPropertyInt("video-params/w") == null) {
-          MPVLib.setPropertyString("vid", "no")
-          MPVLib.setPropertyString("vid", "auto")
-        }
-      }
-      else -> {
+      2, 3 -> {
         // The stream itself is dead. Observed on a TCL TV: the SMB source is proxied over
         // localhost HTTP, the connection disappears, mpv runs out of buffered data and then
         // sits there starved — "playing" but time-pos frozen — without ever reporting an
-        // error, so nothing but a reload can revive it.
-        if (stallRebuilds >= STALL_REBUILD_MAX) {
-          Log.w(TAG, "stall watchdog: source rebuild budget exhausted, falling back to vid re-select")
-          runCatching { player.recoverVideoOutputIfNeeded() }
-          MPVLib.setPropertyString("vid", "no")
-          MPVLib.setPropertyString("vid", "auto")
-        } else {
-          stallRebuilds++
-          // Resume from the last position where playback was actually advancing. The live
-          // `time-pos` collapses to ~0 when a stream dies (mpv fires EOF and resets the
-          // clock), so reading it here would restart the file from the very beginning —
-          // the "played a few minutes, then jumped back to the start" symptom.
-          reloadCurrentMediaFrom(lastProgressTimePos)
-        }
+        // error, so nothing but a reload can revive it. A local file takes the same path
+        // (mpv simply re-opens the file URI), so this step is source-agnostic.
+        //
+        // VO rebuild and `vid` no/auto cycling are deliberately NOT used here: on the TCL TV
+        // they permanently desynced audio, video and subtitles. A recovery that breaks
+        // playback is worse than the freeze.
+        stallRebuilds++
+        reloadCurrentMediaFrom(lastProgressTimePos)
       }
+      else -> notifyRecoveryGaveUp()
+    }
+  }
+
+  /** Ladder exhausted: leave playback alone and say so once, instead of escalating further. */
+  private fun notifyRecoveryGaveUp() {
+    Log.w(
+      TAG,
+      "stall watchdog: recovery budget exhausted ($stallRebuilds source rebuilds for this " +
+        "file) - leaving playback untouched; a play keypress or re-opening the file is needed",
+    )
+    if (stallGaveUpNotified) return
+    stallGaveUpNotified = true
+    runOnUiThread {
+      android.widget.Toast
+        .makeText(this, "自动恢复未成功，请按播放键或重新打开该视频", android.widget.Toast.LENGTH_LONG)
+        .show()
     }
   }
 
