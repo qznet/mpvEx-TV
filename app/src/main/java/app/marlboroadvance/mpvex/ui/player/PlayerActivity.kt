@@ -1043,7 +1043,11 @@ class PlayerActivity :
           MPVLib.setPropertyString("vid", "auto")
         } else {
           stallRebuilds++
-          reloadCurrentMediaFrom(MPVLib.getPropertyDouble("time-pos") ?: lastProgressTimePos)
+          // Resume from the last position where playback was actually advancing. The live
+          // `time-pos` collapses to ~0 when a stream dies (mpv fires EOF and resets the
+          // clock), so reading it here would restart the file from the very beginning —
+          // the "played a few minutes, then jumped back to the start" symptom.
+          reloadCurrentMediaFrom(lastProgressTimePos)
         }
       }
     }
@@ -1060,13 +1064,32 @@ class PlayerActivity :
       Log.w(TAG, "stall watchdog: cannot rebuild source - no playable uri for the current media")
       return
     }
+    // Resume from the last position where playback was actually advancing. [positionSec]
+    // is the watchdog's `lastProgressTimePos`, captured before the stall. The live
+    // `time-pos` collapses to ~0 when a stream dies (mpv fires EOF and resets the clock),
+    // so using it would restart the file from the very beginning.
     val resumeAt = positionSec + 2.0
     Log.w(TAG, "stall watchdog: rebuilding source (rebuild #$stallRebuilds), resuming at ${resumeAt}s")
     runCatching { MPVLib.command("loadfile", uri) }
       .onFailure { Log.w(TAG, "stall watchdog: loadfile failed", it) }
     playerScope.launch {
-      delay(2000)
-      runCatching { MPVLib.command("seek", resumeAt.toString(), "absolute") }
+      // A freshly (re)opened network stream (e.g. SMB via the localhost proxy) can take
+      // longer than a fixed 2s to become seekable. If the absolute seek fires before
+      // `duration` is known it is silently dropped and the file plays from 0. Wait for the
+      // file to open, then seek, retrying for a few seconds.
+      var seeked = false
+      for (attempt in 1..6) {
+        delay(1500)
+        val dur = runCatching { MPVLib.getPropertyDouble("duration") }.getOrNull() ?: 0.0
+        if (dur > 0.0) {
+          runCatching { MPVLib.command("seek", resumeAt.toString(), "absolute") }
+          seeked = true
+          break
+        }
+      }
+      if (!seeked) {
+        Log.w(TAG, "stall watchdog: source rebuild did not open in time — will play from start")
+      }
       runCatching { MPVLib.setPropertyBoolean("pause", false) }
       // Rebase the watchdog so a slow reload is not immediately read as another stall.
       lastProgressTimePos = resumeAt
