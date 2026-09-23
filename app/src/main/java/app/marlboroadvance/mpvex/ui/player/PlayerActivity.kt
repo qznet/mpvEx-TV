@@ -341,6 +341,14 @@ class PlayerActivity :
   private var stallGaveUpNotified = false
   /** How many times we have rebuilt/reloaded the source for the currently loaded file. */
   private var stallRebuilds = 0
+  /**
+   * Set as soon as the CURRENT file has advanced at all. Until it is set a frozen `time-pos`
+   * means "mpv has not shown a frame for this file yet", not "playback stalled": opening a
+   * stream (SMB through the localhost proxy, or a slow local file) routinely takes tens of
+   * seconds, and judging a stall during that window sent files that were merely still opening
+   * down the recovery ladder.
+   */
+  private var hasProgressedSinceLoad = false
   // Rebuild cap moved to the companion object (mpvRebuildCount) so it survives recreate().
   private var lastHeartbeatMs = 0L
   /**
@@ -867,17 +875,20 @@ class PlayerActivity :
         Thread.sleep(100)
 
         // Force-release the video output so the mediacodec_embed VO tears down its
-        // MediaCodec synchronously. Without this the codec can stay allocated and the NEXT
-        // session (or even a fresh process the TV keeps cached) opens to a black screen,
-        // because the device-level codec resource was never returned. The watchdog's
-        // rebuild path and a normal exit both depend on this actually happening.
+        // MediaCodec synchronously, instead of leaving the release to run inside destroy()
+        // while the VO thread is being torn down. Rationale: the viewer reports a black
+        // picture when a video is re-opened (and even after leaving and re-entering the app),
+        // which points at a device-level MediaCodec that was never returned - MediaCodec
+        // instances are a small, device-wide pool, and each session that ends while wedged can
+        // leak one. This is a teardown-only mitigation for that black screen; it is NOT the
+        // cause of, and does not affect, the flicker seen while a file is opening.
         runCatching {
           MPVLib.setPropertyString("vo", "null")
           MPVLib.detachOsdSurface()
           MPVLib.detachSurface()
         }
         // Give mpv's VO thread time to actually release the codec before we destroy the
-        // native context out from under it. This is the real fix for "exit and reopen = black".
+        // native context out from under it.
         Thread.sleep(400)
       }
 
@@ -957,6 +968,26 @@ class PlayerActivity :
     stallWatchdogJob = null
   }
 
+  /**
+   * Point the stall watchdog at a freshly loaded file: drop the previous file's position
+   * baseline and forget every recovery decision made for it.
+   *
+   * Called from [handleFileLoaded], not from [startStallWatchdog]: the watchdog is started once
+   * per Activity (setupMPV), while a single Activity plays many files in a row — the app is
+   * singleTask, so opening another video arrives through onNewIntent, and auto-advance loads the
+   * next episode in the same instance. Each of those restarts `time-pos` from 0, which without
+   * this reset reads as "the position went backwards", i.e. as a freeze.
+   */
+  private fun rebaseStallWatchdogForNewFile() {
+    lastProgressTimePos = 0.0
+    lastProgressMs = System.currentTimeMillis()
+    lastRecoveryMs = 0L
+    stallAttempts = 0
+    stallRebuilds = 0
+    stallGaveUpNotified = false
+    hasProgressedSinceLoad = false
+  }
+
   private fun tickStallWatchdog() {
     if (!mpvInitialized || player.isExiting || isFinishing) return
     val now = System.currentTimeMillis()
@@ -983,11 +1014,30 @@ class PlayerActivity :
           "attempts=$stallAttempts rebuilds=$stallRebuilds path=$path",
       )
     }
+    // The position moved BACKWARDS: a different file started, or the source restarted. The app
+    // is singleTask, so opening another video reuses this Activity through onNewIntent and
+    // `time-pos` restarts from 0 while the baseline still holds the previous file's position.
+    // The "is it moving" test below can then not be satisfied until the new file has played
+    // past the old one, which looks exactly like a permanent freeze and used to send healthy
+    // files down the recovery ladder (a reload plus a jump to the old file's position, and at
+    // one point an Activity recreate). Rebase for the new stream instead of recovering.
+    if (pos < lastProgressTimePos - 1.0) {
+      Log.w(
+        TAG,
+        "stall watchdog: position went backwards (baseline=${lastProgressTimePos}s, now=${pos}s)" +
+          " - new stream, rebasing",
+      )
+      rebaseStallWatchdogForNewFile()
+      lastProgressTimePos = pos
+      return
+    }
     if (pos - lastProgressTimePos > 0.3) {
       // Progressing normally: keep baseline fresh and clear the attempt count.
       lastProgressTimePos = pos
       lastProgressMs = now
       stallAttempts = 0
+      // This file has proved it can play, so from now on a freeze is real and recoverable.
+      hasProgressedSinceLoad = true
       // Playback is moving, so no pause we recorded can still be in effect (self-heals a
       // stale flag, e.g. after loadfile silently unpauses).
       UserPauseState.pausedByApp = false
@@ -1020,6 +1070,13 @@ class PlayerActivity :
     if (paused && !pausedForCache) {
       lastProgressTimePos = pos
       lastProgressMs = now
+      return
+    }
+    // Frozen, but this file has never produced a frame: it is still opening. A stream can take
+    // far longer to open than the grace window, so reloading here would throw away the progress
+    // the open has already made and start it again from scratch.
+    if (!hasProgressedSinceLoad) {
+      heartbeat(now, "waiting for the first frame of this file")
       return
     }
     // Frozen. Only act after the grace window and the recovery cooldown.
@@ -1105,27 +1162,29 @@ class PlayerActivity :
     }
   }
 
-  /** Ladder exhausted: leave playback alone and say so once, instead of escalating further. */
   /**
-   * Ladder exhausted: the instance is wedged but still answering (the cache-drained-to-0 stall),
-   * so our non-destructive steps cannot reset the mediacodec_embed decoder. Instead of leaving a
-   * broken instance that black-screens on the next open, rebuild the player to obtain a fresh mpv
-   * instance (and a fresh SMB proxy connection). Capped by [MAX_MPV_REBUILDS].
+   * Ladder exhausted for this file: leave playback alone and say so once, instead of escalating.
+   *
+   * Escalating to an Activity recreate here was tried and reverted (it made things worse).
+   * `recreate()` destroys the Activity with isFinishing == false, so [cleanupMPV] returns before
+   * MPVLib.destroy() and the native mpv instance is never torn down. The recreated Activity then
+   * runs initialize() against a still-live instance — MPVLib.create() has no guard — and the
+   * player comes up black, having first made the picture flash while the Activity was swapped.
+   * Recreating only becomes viable together with a real teardown of the mpv instance.
    */
   private fun notifyRecoveryGaveUp() {
     Log.w(
       TAG,
       "stall watchdog: recovery budget exhausted ($stallRebuilds source rebuilds for this " +
-        "file) - non-destructive steps cannot reset mediacodec_embed; rebuilding player",
+        "file) - leaving playback untouched; a play keypress or re-opening the file is needed",
     )
     if (stallGaveUpNotified) return
     stallGaveUpNotified = true
     runOnUiThread {
       android.widget.Toast
-        .makeText(this, "自动恢复未成功，正在重建播放器…", android.widget.Toast.LENGTH_LONG)
+        .makeText(this, "自动恢复未成功，请按播放键或重新打开该视频", android.widget.Toast.LENGTH_LONG)
         .show()
     }
-    rebuildPlayerInstance()
   }
 
   /**
@@ -2717,6 +2776,11 @@ class PlayerActivity :
     // Clear any deferred resume target from the previous file before loading new state.
     pendingResumeSeek = null
     resumeSeekApplied = false
+
+    // Rebase the stall watchdog for this file before anything else can look at it. One Activity
+    // plays many files in a row (singleTask onNewIntent, auto-advance) and each of them restarts
+    // `time-pos` from 0, so the previous file's baseline must not survive into this one.
+    rebaseStallWatchdogForNewFile()
 
     // Reset per-file audio/subtitle restore snapshots so a previous file's track ids are
     // not re-applied after a later file (which may have different or no tracks at all).
