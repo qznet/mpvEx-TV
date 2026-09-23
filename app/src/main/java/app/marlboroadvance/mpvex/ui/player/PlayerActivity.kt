@@ -341,8 +341,7 @@ class PlayerActivity :
   private var stallGaveUpNotified = false
   /** How many times we have rebuilt/reloaded the source for the currently loaded file. */
   private var stallRebuilds = 0
-  /** Set once we have recreated the activity because the mpv core stopped answering. */
-  private var hasRestartedForWedgedMpv = false
+  // Rebuild cap moved to the companion object (mpvRebuildCount) so it survives recreate().
   private var lastHeartbeatMs = 0L
   /**
    * The watchdog probes mpv through JNI. If the mpv core wedges, that probe itself blocks
@@ -866,6 +865,20 @@ class PlayerActivity :
         // We use a short blocking wait here as onDestroy is already on the main thread
         // and this ensures proper cleanup before activity destruction
         Thread.sleep(100)
+
+        // Force-release the video output so the mediacodec_embed VO tears down its
+        // MediaCodec synchronously. Without this the codec can stay allocated and the NEXT
+        // session (or even a fresh process the TV keeps cached) opens to a black screen,
+        // because the device-level codec resource was never returned. The watchdog's
+        // rebuild path and a normal exit both depend on this actually happening.
+        runCatching {
+          MPVLib.setPropertyString("vo", "null")
+          MPVLib.detachOsdSurface()
+          MPVLib.detachSurface()
+        }
+        // Give mpv's VO thread time to actually release the codec before we destroy the
+        // native context out from under it. This is the real fix for "exit and reopen = black".
+        Thread.sleep(400)
       }
 
       // Now safe to destroy MPV as internal threads have had time to shut down
@@ -931,7 +944,7 @@ class PlayerActivity :
           // One unanswered probe can be nothing more than a busy demuxer (slow SMB open).
           // Escalating recreates the Activity, which restarts playback from the saved
           // position, so require repeated timeouts before paying that price.
-          if (stallWedgedTimeouts >= STALL_WEDGED_TIMEOUTS) escalateWedgedMpv()
+          if (stallWedgedTimeouts >= STALL_WEDGED_TIMEOUTS) rebuildPlayerInstance()
         } else {
           stallWedgedTimeouts = 0
         }
@@ -978,6 +991,9 @@ class PlayerActivity :
       // Playback is moving, so no pause we recorded can still be in effect (self-heals a
       // stale flag, e.g. after loadfile silently unpauses).
       UserPauseState.pausedByApp = false
+      // Healthy playback refreshes the rebuild budget so the cap is "consecutive rebuilds"
+      // rather than "ever this process".
+      mpvRebuildCount = 0
       return
     }
     // time-pos is frozen. A pause the user asked for (directly, via PiP, via the
@@ -1090,19 +1106,26 @@ class PlayerActivity :
   }
 
   /** Ladder exhausted: leave playback alone and say so once, instead of escalating further. */
+  /**
+   * Ladder exhausted: the instance is wedged but still answering (the cache-drained-to-0 stall),
+   * so our non-destructive steps cannot reset the mediacodec_embed decoder. Instead of leaving a
+   * broken instance that black-screens on the next open, rebuild the player to obtain a fresh mpv
+   * instance (and a fresh SMB proxy connection). Capped by [MAX_MPV_REBUILDS].
+   */
   private fun notifyRecoveryGaveUp() {
     Log.w(
       TAG,
       "stall watchdog: recovery budget exhausted ($stallRebuilds source rebuilds for this " +
-        "file) - leaving playback untouched; a play keypress or re-opening the file is needed",
+        "file) - non-destructive steps cannot reset mediacodec_embed; rebuilding player",
     )
     if (stallGaveUpNotified) return
     stallGaveUpNotified = true
     runOnUiThread {
       android.widget.Toast
-        .makeText(this, "自动恢复未成功，请按播放键或重新打开该视频", android.widget.Toast.LENGTH_LONG)
+        .makeText(this, "自动恢复未成功，正在重建播放器…", android.widget.Toast.LENGTH_LONG)
         .show()
     }
+    rebuildPlayerInstance()
   }
 
   /**
@@ -1150,15 +1173,27 @@ class PlayerActivity :
     }
   }
 
-  /** mpv stopped answering property queries entirely: only a fresh mpv instance can help. */
-  private fun escalateWedgedMpv() {
-    if (hasRestartedForWedgedMpv) {
-      Log.w(TAG, "stall watchdog: mpv still not answering but the activity was already recreated once; not retrying")
+  /**
+   * Obtain a fresh mpv instance by recreating the Activity. This is the only reliable way to
+   * clear a wedged mediacodec_embed decoder / dead SMB proxy connection: the non-destructive
+   * watchdog steps (seek / reload) cannot reset the hardware codec, and leaving the broken
+   * instance around is exactly what makes the NEXT open come up black. Recreating tears the old
+   * instance down (cleanupMPV releases the codec first) and starts a new one that re-registers
+   * the SMB proxy and auto-resumes from the saved position.
+   *
+   * Triggered both when mpv stops answering JNI probes (hard wedge) and when the non-destructive
+   * recovery budget is exhausted while mpv is still answering (the cache-drained-to-0 stall).
+   * Capped process-wide by [MAX_MPV_REBUILDS] to avoid a recreate loop; the budget is refreshed
+   * to 0 on healthy playback.
+   */
+  private fun rebuildPlayerInstance() {
+    if (mpvRebuildCount >= MAX_MPV_REBUILDS) {
+      Log.w(TAG, "stall watchdog: player already rebuilt $mpvRebuildCount times this process; not recreating again (force-close the app to reset)")
       return
     }
-    hasRestartedForWedgedMpv = true
+    mpvRebuildCount++
     runCatching { saveVideoPlaybackState(fileName) }
-    Log.w(TAG, "stall watchdog: recreating PlayerActivity to obtain a fresh mpv instance")
+    Log.w(TAG, "stall watchdog: recreating PlayerActivity to obtain a fresh mpv instance (rebuild #$mpvRebuildCount/$MAX_MPV_REBUILDS)")
     playerScope.launch(Dispatchers.Main) { runCatching { recreate() } }
   }
 
@@ -4937,6 +4972,18 @@ class PlayerActivity :
      * Intent action used to return playback result data to the calling activity.
      */
     private const val RESULT_INTENT = "app.marlboroadvance.mpvex.ui.player.PlayerActivity.result"
+
+    /**
+     * Process-wide count of how many times we have rebuilt the player (recreate()) to
+     * obtain a fresh mpv instance after a stall. Stored on the companion object (not a
+     * per-instance field) so it survives Activity.recreate() — otherwise each rebuild would
+     * reset the flag and the watchdog could loop forever recreating the activity. Capped by
+     * [MAX_MPV_REBUILDS]. Refreshed to 0 whenever playback is observed healthy again
+     * (see tickStallWatchdog), so the cap is "consecutive rebuilds", not "ever".
+     */
+    @Volatile
+    private var mpvRebuildCount = 0
+    private const val MAX_MPV_REBUILDS = 2
 
     /**
      * Constant for "brightness not set".
