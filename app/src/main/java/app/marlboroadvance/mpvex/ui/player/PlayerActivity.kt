@@ -339,8 +339,18 @@ class PlayerActivity :
   private var stallWedgedTimeouts = 0
   /** Set once the "recovery gave up" notice has been shown for the current stall episode. */
   private var stallGaveUpNotified = false
-  /** How many times we have rebuilt/reloaded the source for the currently loaded file. */
+  /** How many times we have rebuilt/reloaded the source for the current stall episode. */
   private var stallRebuilds = 0
+  /**
+   * True while [reloadCurrentMediaFrom] is re-opening the CURRENT source as a recovery. Such a
+   * reload raises MPV_EVENT_FILE_LOADED like any other load, so [rebaseStallWatchdogForNewFile]
+   * needs to be told the difference: a recovery reload must keep counting against
+   * [STALL_REBUILD_MAX] instead of being treated as a brand-new file and resetting the budget.
+   *
+   * Written from the recovery coroutine and read from mpv's event thread, hence @Volatile.
+   */
+  @Volatile
+  private var recoveryReloadPending = false
   /**
    * Set as soon as the CURRENT file has advanced at all. Until it is set a frozen `time-pos`
    * means "mpv has not shown a frame for this file yet", not "playback stalled": opening a
@@ -984,14 +994,22 @@ class PlayerActivity :
    * next episode in the same instance. Each of those restarts `time-pos` from 0, which without
    * this reset reads as "the position went backwards", i.e. as a freeze.
    */
-  private fun rebaseStallWatchdogForNewFile() {
+  private fun rebaseStallWatchdogForNewFile(isRecoveryReload: Boolean = false) {
     lastProgressTimePos = 0.0
     lastProgressMs = System.currentTimeMillis()
     lastRecoveryMs = 0L
     stallAttempts = 0
-    stallRebuilds = 0
-    stallGaveUpNotified = false
     hasProgressedSinceLoad = false
+    // Only a genuinely different file earns a fresh rebuild budget. A recovery reload also ends
+    // in MPV_EVENT_FILE_LOADED, so resetting here would wipe the budget with the very reload it
+    // is supposed to count: [STALL_REBUILD_MAX] could never be reached and a source that is
+    // genuinely unreadable would be reloaded forever instead of giving up. The budget is
+    // refreshed by healthy playback instead — see [STALL_BUDGET_REFRESH_MS].
+    if (!isRecoveryReload) {
+      stallRebuilds = 0
+      stallGaveUpNotified = false
+    }
+    recoveryReloadPending = false
   }
 
   private fun tickStallWatchdog() {
@@ -1326,6 +1344,10 @@ class PlayerActivity :
     // so using it would restart the file from the very beginning.
     val resumeAt = positionSec + 2.0
     Log.w(TAG, "stall watchdog: rebuilding source (rebuild #$stallRebuilds), resuming at ${resumeAt}s, uri=$loadUri")
+    // Flag this load as a recovery BEFORE issuing it. loadfile raises MPV_EVENT_FILE_LOADED,
+    // which runs handleFileLoaded() -> rebaseStallWatchdogForNewFile(), and that must not treat
+    // the reload as a brand-new file.
+    recoveryReloadPending = true
     runCatching { MPVLib.command("loadfile", loadUri) }
       .onFailure { Log.w(TAG, "stall watchdog: loadfile failed", it) }
     playerScope.launch {
@@ -1351,6 +1373,9 @@ class PlayerActivity :
       lastProgressTimePos = resumeAt
       lastProgressMs = System.currentTimeMillis()
       lastRecoveryMs = System.currentTimeMillis()
+      // Defensive clear: if the reload never produced MPV_EVENT_FILE_LOADED (loadfile failed),
+      // the flag must not survive to suppress the budget reset of the next genuine file open.
+      recoveryReloadPending = false
     }
   }
 
@@ -2921,8 +2946,9 @@ class PlayerActivity :
 
     // Rebase the stall watchdog for this file before anything else can look at it. One Activity
     // plays many files in a row (singleTask onNewIntent, auto-advance) and each of them restarts
-    // `time-pos` from 0, so the previous file's baseline must not survive into this one.
-    rebaseStallWatchdogForNewFile()
+    // `time-pos` from 0, so the previous file's baseline must not survive into this one. A
+    // recovery reload of the SAME source is not a new file: it must keep its rebuild budget.
+    rebaseStallWatchdogForNewFile(recoveryReloadPending)
 
     // Reset per-file audio/subtitle restore snapshots so a previous file's track ids are
     // not re-applied after a later file (which may have different or no tracks at all).
