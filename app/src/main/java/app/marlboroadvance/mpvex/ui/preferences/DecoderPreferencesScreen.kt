@@ -96,6 +96,23 @@ object DecoderPreferencesScreen : Screen {
 
           item {
             PreferenceCard {
+              val useMediacodecEmbed by preferences.useMediacodecEmbed.collectAsState()
+              SwitchPreference(
+                value = useMediacodecEmbed,
+                onValueChange = {
+                  preferences.useMediacodecEmbed.set(it)
+                },
+                title = { Text(stringResource(R.string.pref_decoder_mediacodec_embed_title)) },
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_decoder_mediacodec_embed_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
+
+              PreferenceDivider()
+
               val profile by preferences.profile.collectAsState()
               val currentProfile = MPVProfile.fromValue(profile)
               ListPreference(

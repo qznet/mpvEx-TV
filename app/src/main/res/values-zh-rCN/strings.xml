@@ -206,6 +206,8 @@
 
   <string name="pref_decoder">解码器</string>
   <string name="pref_decoder_summary">硬件解码、像素格式、去带</string>
+  <string name="pref_decoder_mediacodec_embed_title">MediaCodec 嵌入式硬解 (HW+)</string>
+  <string name="pref_decoder_mediacodec_embed_summary">强制 vo=mediacodec_embed 与 hwdec=mediacodec，让零拷贝硬解始终有可呈现的画面表面。可避免 mpv.conf 漏写这两行时导致的黑屏 / 静默退回软解。默认开启。</string>
   <string name="pref_decoder_profile_title">MPV 配置方案</string>
   <string name="pref_decoder_try_hw_dec_title">尝试硬件解码</string>
   <string name="pref_decoder_gpu_next_title">使用 gpu-next</string>

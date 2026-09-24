@@ -117,10 +117,17 @@ class MPVView(
     val useVulkan = decoderPreferences.useVulkan.get()
     val useGpuNext = useVulkan || decoderPreferences.gpuNext.get()
     
-    // Do NOT override vo here - let mpv.conf decide (supports mediacodec_embed)
-    // If user did not set vo in mpv.conf, set default after init
-    // setVo(if (useGpuNext) "gpu-next" else "gpu")
-    
+    // Embedded MediaCodec video output (HW+). This is the project's mandated decoder mode and
+    // the only one that keeps zero-copy mediacodec frames on the codec's own surface. When
+    // enabled we force it HERE so playback never depends on an external mpv.conf carrying
+    // `vo=mediacodec_embed` — forgetting that line is exactly what made the app silently fall
+    // back to software decoding and show a black / blank embed surface. When this is OFF we
+    // leave `vo` to mpv.conf (or mpv's gpu default) for debugging.
+    val useMediacodecEmbed = decoderPreferences.useMediacodecEmbed.get()
+    if (useMediacodecEmbed) {
+      MPVLib.setOptionString("vo", "mediacodec_embed")
+    }
+
     // Set GPU API context (Vulkan or OpenGL) if using gpu/gpu-next
     // (mediacodec_embed ignores these settings)
     if (useVulkan) {
@@ -131,19 +138,20 @@ class MPVView(
       MPVLib.setOptionString("gpu-context", "android")
     }
 
-    // Default to zero-copy MediaCodec (HW+). With vo=mediacodec_embed the decoded
-    // frames stay in the codec's output surface and are never copied into app RAM.
-    // This is critical on low-RAM Android TV boxes (<=3GB), where copy-back decoding
-    // (mediacodec-copy / auto-copy) keeps one decoded frame buffer per displayed
-    // frame in the app heap — the dominant, uncapped memory sink during long
-    // playback that drives the freeze + black screen. Also the project's mandated
-    // decoder mode (HW+ for all videos). The live in-player decoder switcher still
-    // lets the user drop to HW / SW / Auto per session if needed.
-    MPVLib.setOptionString(
-      "hwdec",
-      if (decoderPreferences.tryHWDecoding.get()) "mediacodec" else "no",
-    )
+    // Decoder selection. With mediacodec_embed the video output IS the MediaCodec surface, so
+    // HW decoding must be the zero-copy `mediacodec` mode; any other hwdec value has no surface
+    // to present into and mpv silently drops to software. When the embed VO is ON we therefore
+    // pin hwdec=mediacodec (HW+) regardless of `tryHWDecoding`; only when the embed VO is OFF
+    // do we fall back to the user's tryHWDecoding choice (legacy behaviour).
+    val hwdec =
+      if (useMediacodecEmbed || decoderPreferences.tryHWDecoding.get()) "mediacodec" else "no"
+    MPVLib.setOptionString("hwdec", hwdec)
     MPVLib.setOptionString("hwdec-codecs", "all")
+
+    // Detect a dead network source instead of hanging on it forever. Without this, a dropped
+    // SMB/HTTP connection is never noticed: mpv keeps its (stale) read pending, the cache drains
+    // to 0 and playback stops with no error. 120s is generous for SMB proxied over localhost.
+    MPVLib.setOptionString("network-timeout", "120")
 
     if (decoderPreferences.useYUV420P.get()) {
       MPVLib.setOptionString("vf", "format=yuv420p")
