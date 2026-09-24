@@ -365,8 +365,14 @@ class PlayerActivity :
   private val STALL_THRESHOLD_MS = 20_000L
   private val STALL_RECOVERY_COOLDOWN_MS = 12_000L
   private val STALL_MAX_ATTEMPTS = 4              // 1 nudge, 2/3 reload source, 4 give up
-  private val STALL_REBUILD_MAX = 2               // source rebuilds per loaded file
+  private val STALL_REBUILD_MAX = 2               // source rebuilds per stall episode
   private val STALL_ROUND_RESET_MS = 120_000L     // after a long quiet round, allow a fresh ladder
+  // How long playback must run healthily before the source-rebuild budget counts as fresh
+  // again. Without this the budget was "rebuilds per loaded file", which is wrong for the
+  // long NAS files this player exists for: a 4-hour SMB movie whose server drops the session
+  // every ~30 minutes needs far more than two rebuilds, so the third drop gave up for good
+  // ("自动恢复未成功，请按播放键或重新打开该视频") on a perfectly good file.
+  private val STALL_BUDGET_REFRESH_MS = 60_000L
   // The probe timeout must be generous: a busy demuxer (opening a large SMB file) can take
   // seconds to answer without being wedged.
   private val STALL_TICK_TIMEOUT_MS = 6_000L
@@ -1044,6 +1050,13 @@ class PlayerActivity :
       // Healthy playback refreshes the rebuild budget so the cap is "consecutive rebuilds"
       // rather than "ever this process".
       mpvRebuildCount = 0
+      // Same idea for the source-rebuild budget: once playback has run healthily for a while,
+      // the previous freeze is over and the next one deserves its own attempts. See
+      // [STALL_BUDGET_REFRESH_MS].
+      if (now - lastRecoveryMs >= STALL_BUDGET_REFRESH_MS) {
+        stallRebuilds = 0
+        stallGaveUpNotified = false
+      }
       return
     }
     // time-pos is frozen. A pause the user asked for (directly, via PiP, via the
@@ -1058,6 +1071,23 @@ class PlayerActivity :
       lastProgressMs = now
       return
     }
+    // `keep-open` (enabled in MPVView) makes mpv pause at the end of a file through
+    // handle_keep_open() -> set_pause_state(true) in player/playloop.c. That path sets ONLY
+    // opts->pause — it never raises `paused-for-cache`, whose value is computed separately
+    // from the underrun state. When the source dies mid-file the demuxer simply runs out of
+    // input, so mpv reports end-of-file far from the real end and pauses exactly like that.
+    // The manual-pause guard below then read it as a deliberate pause and returned: the
+    // ladder never ran and playback stayed frozen for good — the "stops after ~30 min,
+    // position frozen ~50%, cache near 0, no live proxy connection, play key does nothing"
+    // freeze. Detect that shape (end-of-file reached far from the real end) before the guard,
+    // so the ladder gets a chance to rebuild the source. A genuine pause by the viewer cannot
+    // match it: `eof-reached` stays false for the whole file.
+    val prematureEnd =
+      isPrematureSourceEnd(
+        pos,
+        MPVLib.getPropertyDouble("duration") ?: 0.0,
+        MPVLib.getPropertyBoolean("eof-reached") == true,
+      )
     // Structural guard, independent of our own bookkeeping: `cache-pause` is the only way
     // mpv pauses itself, and while it holds playback it always raises `paused-for-cache`.
     // So a pause with a healthy cache can only mean "someone deliberately paused this" —
@@ -1067,7 +1097,7 @@ class PlayerActivity :
     // paths, and a race between them cleared the flag), after which the watchdog resumed
     // the video and ran the recovery ladder on top of it — the reported
     // "I pressed pause and it started playing again / jumped ahead".
-    if (paused && !pausedForCache) {
+    if (paused && !pausedForCache && !prematureEnd) {
       lastProgressTimePos = pos
       lastProgressMs = now
       return
@@ -1095,9 +1125,9 @@ class PlayerActivity :
       "stall watchdog: frozen ${(now - lastProgressMs) / 1000}s at $pos " +
         "(pause=$paused pausedByApp=$pausedByApp pausedForCache=$pausedForCache) -> attempt #$stallAttempts",
     )
-    // Reached only when mpv paused itself for the cache (every deliberate pause returned
-    // above), so resume first: the recovery steps below would be issued against a paused
-    // player and do nothing.
+    // Reached only for pauses mpv made on its own behalf — cache-pause, or `keep-open` at a
+    // premature end of file (every deliberate pause returned above) — so resume first: the
+    // recovery steps below would be issued against a paused player and do nothing.
     if (paused) {
       runCatching { MPVLib.setPropertyBoolean("pause", false) }
         .onFailure { Log.w(TAG, "stall watchdog: failed to resume playback", it) }
@@ -1115,7 +1145,18 @@ class PlayerActivity :
         )
         .show()
     }
-    recoverFromStall(stallAttempts)
+    if (prematureEnd) {
+      // The source is already gone (mpv ended the file early), so step 1's decoder nudge would
+      // be issued against a stream that no longer exists. Go straight to a source rebuild.
+      if (stallRebuilds >= STALL_REBUILD_MAX) {
+        notifyRecoveryGaveUp()
+      } else {
+        stallRebuilds++
+        reloadCurrentMediaFrom(lastProgressTimePos)
+      }
+    } else {
+      recoverFromStall(stallAttempts)
+    }
   }
 
   /** Periodic liveness log so "the watchdog never ran" can be told apart from "it ran and
@@ -1126,9 +1167,64 @@ class PlayerActivity :
     Log.d(TAG, "stall watchdog heartbeat: $detail (watchdog alive)")
   }
 
+  /**
+   * True when mpv reported end-of-file but the playhead is nowhere near the real end, i.e. the
+   * SOURCE died mid-file rather than the file actually finishing.
+   *
+   * The margin is deliberately far wider than the 5s tolerance [handleEndOfFile] uses to decide
+   * whether to advance to the next episode: a container whose reported `duration` overshoots
+   * the real end by a handful of seconds is common, and treating that as a dead source would
+   * reload the tail of such a file a couple of times instead of simply letting it end. A
+   * source that genuinely dies mid-playback does so minutes — typically halfway — from the end,
+   * so requiring the playhead to be a full minute short of `duration` separates the two cases
+   * with a wide safety margin.
+   */
+  private fun isPrematureSourceEnd(
+    pos: Double,
+    dur: Double,
+    eofReached: Boolean,
+  ): Boolean = eofReached && dur > 0.0 && pos < dur - 60.0
+
+  /**
+   * The stream died before the real end of the file: mpv reports end-of-file at [pos] while
+   * [dur] says there is far more to come. This is what a silently dropped SMB session looks
+   * like from the player's side — the localhost proxy's read fails, the HTTP stream ends, and
+   * the demuxer treats the truncated input as the end of the file.
+   *
+   * Letting this pass (the old behaviour) froze playback permanently, so it is handled as a
+   * recovery instead of being merely logged: see the call site in [handleEndOfFile].
+   *
+   * Shares the watchdog's cooldown and rebuild budget, so a source that is genuinely
+   * unreadable cannot turn this into a reload loop.
+   */
+  private fun recoverFromPrematureEof(pos: Double, dur: Double) {
+    val now = System.currentTimeMillis()
+    if (stallRebuilds >= STALL_REBUILD_MAX) {
+      notifyRecoveryGaveUp()
+      return
+    }
+    // A watchdog tick may already be handling this same freeze; let it own the attempt so the
+    // source is not reloaded twice in a row.
+    if (now - lastRecoveryMs < STALL_RECOVERY_COOLDOWN_MS) return
+    lastRecoveryMs = now
+    Log.w(
+      TAG,
+      "EOF guard: source died mid-file (pos=${"%.1f".format(pos)}s / " +
+        "dur=${"%.1f".format(dur)}s) - rebuilding source " +
+        "(rebuild #${stallRebuilds + 1}/$STALL_REBUILD_MAX)",
+    )
+    runOnUiThread {
+      android.widget.Toast
+        .makeText(this, "片源中断，正在从断点重新加载…", android.widget.Toast.LENGTH_SHORT)
+        .show()
+    }
+    stallRebuilds++
+    reloadCurrentMediaFrom(lastProgressTimePos)
+  }
+
   /** Rebuild the source and reload at [positionSec]; see [reloadCurrentMediaFrom]. */
   private fun recoverFromStall(attempt: Int) {
-    // A source reload is the only heavier step left, and it is capped per loaded file. Once
+    // A source reload is the only heavier step left, and it is capped per stall episode. Once
     // the budget is gone, stop rather than escalate into VO/decoder surgery.
     if (attempt >= 2 && stallRebuilds >= STALL_REBUILD_MAX) {
       notifyRecoveryGaveUp()
@@ -2462,10 +2558,23 @@ class PlayerActivity :
       if (!isRealEnd) {
         Log.w(
           TAG,
-          "EOF guard: ignoring spurious end-of-file (pos=${"%.1f".format(pos)}s / " +
+          "EOF guard: source ended early (pos=${"%.1f".format(pos)}s / " +
             "dur=${"%.1f".format(dur)}s, playlistIndex=$playlistIndex/${playlist.size}); " +
             "NOT advancing to next episode",
         )
+        // Reporting the truncated stream is only half the job — the previous code stopped
+        // here. Because `keep-open` pauses the player at this very instant through
+        // set_pause_state(true), which does NOT raise `paused-for-cache`, the stall
+        // watchdog's manual-pause guard stood down as well. Two independent guards both
+        // declined to act, so playback stayed frozen until the video was re-opened by hand.
+        // Rebuild the source from the last position that actually played instead — but only
+        // when the playhead is genuinely far from the end, so that a container whose reported
+        // duration overshoots the real end still simply finishes.
+        if (isPrematureSourceEnd(pos, dur, isEof)) {
+          recoverFromPrematureEof(pos, dur)
+        } else {
+          Log.w(TAG, "EOF guard: near the reported end of file - leaving playback alone")
+        }
         return
       }
       Log.d(
