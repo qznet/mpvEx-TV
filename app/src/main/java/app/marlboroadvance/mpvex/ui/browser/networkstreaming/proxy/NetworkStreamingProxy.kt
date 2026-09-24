@@ -143,7 +143,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     old?.let { stale ->
       // Detach the teardown: a graceful close on a half-open socket blocks until SO_TIMEOUT,
       // and the caller (watchdog) must not wait for it.
-      ioScope.launch {
+      keepAliveScope.launch {
         try {
           stale.disconnect()
         } catch (_: Exception) {
@@ -171,7 +171,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     val oldInfo = activeStreams.remove(oldStreamId) ?: return null
     val connId = oldInfo.connection.id
     clientCache.remove(connId)?.let { stale ->
-      ioScope.launch {
+      keepAliveScope.launch {
         try {
           stale.disconnect()
         } catch (_: Exception) {}

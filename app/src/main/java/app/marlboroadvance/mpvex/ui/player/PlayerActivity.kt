@@ -1205,7 +1205,7 @@ class PlayerActivity :
     // never resumes even though a fresh SMB socket technically exists. Rotating the stream ID
     // gives mpv a brand-new proxy URL, which forces a new HTTP connection and therefore a
     // completely fresh SMB read path.
-    var loadUri = uri
+    var loadUri: String = uri
     runCatching {
       val u = android.net.Uri.parse(uri)
       if (u.host == "127.0.0.1" || u.host == "localhost") {
