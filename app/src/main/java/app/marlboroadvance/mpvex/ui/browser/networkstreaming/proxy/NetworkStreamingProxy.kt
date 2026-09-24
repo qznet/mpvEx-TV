@@ -9,11 +9,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.InputStream
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -28,6 +32,10 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     // chance to silently drop the TCP while the player is reading from its demuxer cache.
     // Must stay comfortably below typical idle-drop windows (~25s+ observed on this NAS).
     private const val KEEPALIVE_INTERVAL_MS = 15_000L
+
+    // Hard ceiling for any single keepalive ping. A half-open SMB session can otherwise block
+    // the loop (and therefore every other connection) indefinitely.
+    private const val KEEPALIVE_TIMEOUT_MS = 15_000L
 
     @Volatile
     private var instance: NetworkStreamingProxy? = null
@@ -133,7 +141,9 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     val connId = streamInfo.connection.id
     val old = clientCache.remove(connId)
     old?.let { stale ->
-      runBlocking {
+      // Detach the teardown: a graceful close on a half-open socket blocks until SO_TIMEOUT,
+      // and the caller (watchdog) must not wait for it.
+      ioScope.launch {
         try {
           stale.disconnect()
         } catch (_: Exception) {
@@ -150,10 +160,40 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   }
 
   /**
+   * Create a brand-new stream entry for the same underlying file. This is stronger than
+   * [forceReconnect]: it gives mpv a fresh proxy URL, which forces a new HTTP connection and
+   * therefore a completely new SMB read path. Without this, mpv can keep reusing the same
+   * HTTP connection whose `serve()` thread is wedged on a dead SMB session, so the cache stays
+   * at 0 even though a new SMB socket is technically ESTABLISHED. Returns the new proxy URL or
+   * `null` if the old stream is no longer registered.
+   */
+  fun rotateStreamId(oldStreamId: String): String? {
+    val oldInfo = activeStreams.remove(oldStreamId) ?: return null
+    val connId = oldInfo.connection.id
+    clientCache.remove(connId)?.let { stale ->
+      ioScope.launch {
+        try {
+          stale.disconnect()
+        } catch (_: Exception) {}
+      }
+    }
+    val newStreamId = "${connId}_${System.currentTimeMillis()}_${oldInfo.filePath.hashCode()}_${UUID.randomUUID().toString().take(8)}"
+    val freshClient = clientCache.getOrPut(connId) {
+      NetworkClientFactory.createClient(oldInfo.connection)
+    }
+    activeStreams[newStreamId] = oldInfo.copy(client = freshClient)
+    Log.w(TAG, "rotateStreamId: $oldStreamId -> $newStreamId (conn $connId)")
+    return "http://127.0.0.1:$listeningPort/$newStreamId"
+  }
+
+  /**
    * Starts the background keepalive loop if it isn't already running. Each tick pings every
    * connection that currently backs an active stream so a dropped session is detected and
    * re-established off the playback path — turning the old "switch/seek freezes for ~15-60s"
    * into a near-instant operation.
+   *
+   * Each ping runs in its own coroutine with a hard timeout so a single half-open session
+   * cannot block the entire loop (and therefore every other connection) indefinitely.
    */
   private fun ensureKeepAlive() {
     if (keepAliveJob?.isActive == true) return
@@ -164,14 +204,18 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
           delay(KEEPALIVE_INTERVAL_MS)
           // Keep warm only the connections that currently back an active stream.
           val activeConnectionIds = activeStreams.values.mapTo(HashSet()) { it.connection.id }
-          for (id in activeConnectionIds) {
-            val client = clientCache[id] ?: continue
-            try {
-              client.keepAlive()
-            } catch (e: Exception) {
-              Log.w(TAG, "Keepalive failed for connection $id", e)
+          activeConnectionIds.map { id ->
+            async(Dispatchers.IO) {
+              val client = clientCache[id] ?: return@async
+              try {
+                withTimeout(KEEPALIVE_TIMEOUT_MS) {
+                  client.keepAlive()
+                }
+              } catch (e: Exception) {
+                Log.w(TAG, "Keepalive failed for connection $id", e)
+              }
             }
-          }
+          }.awaitAll()
         }
       }
     }

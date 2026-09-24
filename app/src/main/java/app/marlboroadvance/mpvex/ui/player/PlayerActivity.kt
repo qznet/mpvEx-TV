@@ -1198,29 +1198,39 @@ class PlayerActivity :
       Log.w(TAG, "stall watchdog: cannot rebuild source - no playable uri for the current media")
       return
     }
-    // If the source is served through the localhost SMB/network proxy, the cached client's
-    // isConnected() lies after an idle-drop (the session the server/router silently killed
-    // while we read from the demuxer cache), so a plain reload would re-open the DEAD session
-    // and the cache would stay at 0 forever. Force a brand-new SMB connection for that stream
-    // before re-issuing loadfile, so the next proxy serve() builds a fresh session.
+    // If the source is served through the localhost SMB/network proxy, a plain reload reuses
+    // the same proxy URL. mpv can keep the same HTTP connection open, and that connection may
+    // be pinned to a `serve()` thread that is wedged on a half-open SMB session (the socket is
+    // still ESTABLISHED but no data is coming). The result is cache stays at 0 and playback
+    // never resumes even though a fresh SMB socket technically exists. Rotating the stream ID
+    // gives mpv a brand-new proxy URL, which forces a new HTTP connection and therefore a
+    // completely fresh SMB read path.
+    var loadUri = uri
     runCatching {
       val u = android.net.Uri.parse(uri)
       if (u.host == "127.0.0.1" || u.host == "localhost") {
         val sid = u.path?.removePrefix("/")?.substringBefore("/")?.takeIf { it.isNotEmpty() }
-        sid?.let {
-          app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+        sid?.let { oldSid ->
+          val proxy = app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
             .getInstance()
-            .forceReconnect(it)
+          val newUrl = proxy.rotateStreamId(oldSid)
+          if (!newUrl.isNullOrBlank()) {
+            loadUri = newUrl
+            registeredStreamIds.remove(oldSid)
+            android.net.Uri.parse(newUrl).path?.removePrefix("/")?.substringBefore("/")?.let { newSid ->
+              registeredStreamIds.add(newSid)
+            }
+          }
         }
       }
-    }.onFailure { Log.w(TAG, "stall watchdog: proxy forceReconnect failed", it) }
+    }.onFailure { Log.w(TAG, "stall watchdog: proxy rotateStreamId failed", it) }
     // Resume from the last position where playback was actually advancing. [positionSec]
     // is the watchdog's `lastProgressTimePos`, captured before the stall. The live
     // `time-pos` collapses to ~0 when a stream dies (mpv fires EOF and resets the clock),
     // so using it would restart the file from the very beginning.
     val resumeAt = positionSec + 2.0
-    Log.w(TAG, "stall watchdog: rebuilding source (rebuild #$stallRebuilds), resuming at ${resumeAt}s")
-    runCatching { MPVLib.command("loadfile", uri) }
+    Log.w(TAG, "stall watchdog: rebuilding source (rebuild #$stallRebuilds), resuming at ${resumeAt}s, uri=$loadUri")
+    runCatching { MPVLib.command("loadfile", loadUri) }
       .onFailure { Log.w(TAG, "stall watchdog: loadfile failed", it) }
     playerScope.launch {
       // A freshly (re)opened network stream (e.g. SMB via the localhost proxy) can take

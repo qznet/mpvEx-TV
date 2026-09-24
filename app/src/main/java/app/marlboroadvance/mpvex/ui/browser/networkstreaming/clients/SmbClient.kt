@@ -21,6 +21,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import java.io.BufferedInputStream
 import java.io.InputStream
 import java.util.EnumSet
@@ -110,34 +111,41 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
 
   override suspend fun connect(): Result<Unit> =
     connectMutex.withLock {
-      withContext(Dispatchers.IO) {
-        try {
-          if (isConnected()) return@withContext Result.success(Unit)
-          // A previous half-open connection may still be lingering; tear it down first.
-          disconnect()
-          val client = getOrCreateClient()
-          val resolvedAddress = try {
-            withTimeout(5000) { java.net.InetAddress.getByName(connection.host) }
-          } catch (e: Exception) {
-            return@withContext Result.failure(Exception("Host not found: ${connection.host}"))
+      try {
+        withTimeout(SMB_TIMEOUT_MS) {
+          withContext(Dispatchers.IO) {
+            try {
+              if (isConnected()) return@withContext Result.success(Unit)
+              // A previous half-open connection may still be lingering; tear it down first.
+              disconnect()
+              val client = getOrCreateClient()
+              val resolvedAddress = try {
+                withTimeout(5000) { java.net.InetAddress.getByName(connection.host) }
+              } catch (e: Exception) {
+                return@withContext Result.failure(Exception("Host not found: ${connection.host}"))
+              }
+              val hostForUrl = resolvedAddress.hostAddress ?: connection.host
+              resolvedHostIp = hostForUrl
+              // connection.path may be "share", "share/sub/dir", "/share/sub/", or use backslashes.
+              // The SMB share is ONLY the first segment; the remainder is the rooted sub-directory.
+              val normalizedPath = connection.path.replace('\\', '/').trim('/')
+              shareName = normalizedPath.substringBefore('/')
+              basePath = normalizedPath.substringAfter('/', "").trim('/')
+              baseUrl = "smb://${hostForUrl}${if (connection.port != 445) ":${connection.port}" else ""}/${shareName}"
+              smbConnection = client.connect(hostForUrl, connection.port)
+              val authContext = if (connection.isAnonymous) AuthenticationContext.anonymous()
+                                else AuthenticationContext(connection.username, connection.password.toCharArray(), null)
+              session = smbConnection!!.authenticate(authContext)
+              diskShare = session!!.connectShare(shareName) as DiskShare
+              Result.success(Unit)
+            } catch (e: Exception) {
+              disconnect(); Result.failure(e)
+            }
           }
-          val hostForUrl = resolvedAddress.hostAddress ?: connection.host
-          resolvedHostIp = hostForUrl
-          // connection.path may be "share", "share/sub/dir", "/share/sub/", or use backslashes.
-          // The SMB share is ONLY the first segment; the remainder is the rooted sub-directory.
-          val normalizedPath = connection.path.replace('\\', '/').trim('/')
-          shareName = normalizedPath.substringBefore('/')
-          basePath = normalizedPath.substringAfter('/', "").trim('/')
-          baseUrl = "smb://${hostForUrl}${if (connection.port != 445) ":${connection.port}" else ""}/${shareName}"
-          smbConnection = client.connect(hostForUrl, connection.port)
-          val authContext = if (connection.isAnonymous) AuthenticationContext.anonymous()
-                            else AuthenticationContext(connection.username, connection.password.toCharArray(), null)
-          session = smbConnection!!.authenticate(authContext)
-          diskShare = session!!.connectShare(shareName) as DiskShare
-          Result.success(Unit)
-        } catch (e: Exception) {
-          disconnect(); Result.failure(e)
         }
+      } catch (e: TimeoutCancellationException) {
+        disconnect()
+        Result.failure(Exception("SMB connect timed out after ${SMB_TIMEOUT_MS}ms", e))
       }
     }
 
@@ -176,7 +184,14 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
    */
   override suspend fun keepAlive() {
     withContext(Dispatchers.IO) {
-      withShare { it.folderExists(basePath) }
+      try {
+        withTimeout(SMB_TIMEOUT_MS) {
+          withShare { it.folderExists(basePath) }
+        }
+      } catch (e: TimeoutCancellationException) {
+        // Surface the timeout as a regular failure so the caller marks the stream broken.
+        throw Exception("SMB keepalive timed out after ${SMB_TIMEOUT_MS}ms", e)
+      }
     }
   }
 
@@ -197,12 +212,14 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
         when {
           idleTooLong || streamBroken -> {
             streamBroken = false
-            reconnect().getOrThrow()
+            withTimeout(SMB_TIMEOUT_MS) { reconnect().getOrThrow() }
           }
-          !isConnected() -> (if (attempt == 0) connect() else reconnect()).getOrThrow()
+          !isConnected() -> withTimeout(SMB_TIMEOUT_MS) {
+            (if (attempt == 0) connect() else reconnect()).getOrThrow()
+          }
         }
         val ds = diskShare ?: throw IllegalStateException("Not connected")
-        val result = block(ds)
+        val result = withTimeout(SMB_TIMEOUT_MS) { block(ds) }
         lastSuccessfulIoMs = System.currentTimeMillis()
         streamBroken = false
         return Result.success(result)
