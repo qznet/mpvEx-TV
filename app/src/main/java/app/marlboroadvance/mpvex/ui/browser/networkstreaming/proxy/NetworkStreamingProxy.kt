@@ -65,7 +65,7 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   data class StreamInfo(
     val connection: NetworkConnection,
     val filePath: String,
-    val client: NetworkClient,
+    var client: NetworkClient,
     var fileSize: Long = -1L,
     var mimeType: String = "video/mp4",
     var title: String? = null,
@@ -118,6 +118,35 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
   fun unregisterStream(streamId: String) {
     // We don't disconnect the client here because it's shared in the cache
     activeStreams.remove(streamId)
+  }
+
+  /**
+   * Force a brand-new client for the stream's connection, dropping the cached one. The proxy's
+   * `getFileStream` trusts [NetworkClient.isConnected], which lies on a half-open socket (the
+   * server/router silently dropped an idle SMB session while playback ran from the demuxer cache),
+   * so a reload/seek never reconnects and the cache drains to 0 — playback freezes permanently.
+   * Calling this before a reload guarantees the next `getFileStream` builds a fresh SMB session
+   * instead of reusing the dead one.
+   */
+  fun forceReconnect(streamId: String) {
+    val streamInfo = activeStreams[streamId] ?: return
+    val connId = streamInfo.connection.id
+    val old = clientCache.remove(connId)
+    old?.let { stale ->
+      runBlocking {
+        try {
+          stale.disconnect()
+        } catch (_: Exception) {
+          // best-effort; the socket is already dead
+        }
+      }
+    }
+    // Re-create a fresh client immediately so the next serve() doesn't block on a reconnect
+    // that depends on the (lying) isConnected() flag.
+    streamInfo.client = clientCache.getOrPut(connId) {
+      NetworkClientFactory.createClient(streamInfo.connection)
+    }
+    Log.w(TAG, "forceReconnect: dropped stale client for stream $streamId (conn $connId)")
   }
 
   /**

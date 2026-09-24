@@ -90,6 +90,14 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
   @Volatile
   private var lastSuccessfulIoMs: Long = 0L
 
+  // Set when a streaming read fails or returns no data on a connection we still believe is
+  // alive. Because the actual reads happen OUTSIDE [withShare] (the returned InputStream is
+  // read by the proxy / mpv), a dropped session is otherwise invisible until the next
+  // withShare call — which may never come for a long-lived stream. This forces that next
+  // withShare to reconnect instead of trusting the (lying) isConnected() flag.
+  @Volatile
+  private var streamBroken = false
+
   private var smbConnection: Connection? = null
   private var session: Session? = null
   private var diskShare: DiskShare? = null
@@ -187,15 +195,20 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
         val idleTooLong = lastSuccessfulIoMs != 0L &&
           System.currentTimeMillis() - lastSuccessfulIoMs > IDLE_RECONNECT_THRESHOLD_MS
         when {
-          idleTooLong -> reconnect().getOrThrow()
+          idleTooLong || streamBroken -> {
+            streamBroken = false
+            reconnect().getOrThrow()
+          }
           !isConnected() -> (if (attempt == 0) connect() else reconnect()).getOrThrow()
         }
         val ds = diskShare ?: throw IllegalStateException("Not connected")
         val result = block(ds)
         lastSuccessfulIoMs = System.currentTimeMillis()
+        streamBroken = false
         return Result.success(result)
       } catch (e: Exception) {
         lastError = e
+        streamBroken = true
         // Drop the stale connection so the next attempt establishes a fresh session.
         disconnect()
       }
@@ -275,16 +288,28 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
             return if (read(b, 0, 1) == 1) b[0].toInt() and 0xFF else -1
           }
           override fun read(b: ByteArray, off: Int, len: Int): Int {
-            val read = file.read(b, currentPosition, off, len)
-            if (read > 0) {
-              currentPosition += read
-              // These proxy reads happen OUTSIDE withShare, so this is the only place that
-              // reflects real streaming I/O. Refresh the idle timer (throttled) so the
-              // idle-reconnect check never tears down a stream that is actively reading.
-              val now = System.currentTimeMillis()
-              if (now - lastSuccessfulIoMs > 1000L) lastSuccessfulIoMs = now
+            return try {
+              val read = file.read(b, currentPosition, off, len)
+              if (read > 0) {
+                currentPosition += read
+                // These proxy reads happen OUTSIDE withShare, so this is the only place that
+                // reflects real streaming I/O. Refresh the idle timer (throttled) so the
+                // idle-reconnect check never tears down a stream that is actively reading.
+                val now = System.currentTimeMillis()
+                if (now - lastSuccessfulIoMs > 1000L) lastSuccessfulIoMs = now
+              } else if (read == 0) {
+                // A 0 read on a half-dead socket means no data is coming; flag the stream so
+                // the next withShare() forces a reconnect instead of blocking on the dead
+                // session (isConnected() would still claim it is alive).
+                streamBroken = true
+              }
+              read
+            } catch (e: Exception) {
+              // The SMB session died mid-stream; surface it so withShare() reconnects on the
+              // next operation rather than trusting the stale isConnected() flag.
+              streamBroken = true
+              throw e
             }
-            return read
           }
           override fun close() { try { file.close() } catch (_: Exception) {} }
         }
