@@ -164,20 +164,21 @@ class PlayerPreferences(
   /**
    * Max in-memory demuxer cache in MiB (mpv `demuxer-max-bytes`).
    *
-   * Default raised from 64 to 256 MiB. On a 3GB TV with ~1GB free during playback, a
-   * 256MiB cap leaves ~750MiB headroom for the decoder + app, so this smooths network
-   * and SMB playback without risking OOM. The UI slider allows up to 512 MiB if the
-   * device has more headroom.
+   * Forward budget only — [demuxerMaxBackBytesMib] is a SECOND budget, so the real peak is the
+   * sum of the two. Default lowered from 256 to 192 MiB after measuring a 3GB TV with ~1GB free
+   * during playback: 192 + 48 keeps the peak at ~240MiB and leaves ~410MiB for the decoder, GPU
+   * and the app. The UI slider allows up to 512 MiB for devices with more headroom.
    */
-  val demuxerMaxBytesMib = preferenceStore.getInt("demuxer_max_bytes_mib", 256)
+  val demuxerMaxBytesMib = preferenceStore.getInt("demuxer_max_bytes_mib", 192)
 
   /**
    * Max cached already-played data in MiB (mpv `demuxer-max-back-bytes`).
    *
-   * Default raised from 16 to 64 MiB so seeking backwards within the recent window is
-   * instant and does not trigger a re-read (which is what stalls SMB/local long files).
+   * Default lowered from 64 to 48 MiB: back-buffer is a separate budget that adds to
+   * [demuxerMaxBytesMib], and 48MiB already makes short backward seeks instant. Raising it buys
+   * very little compared with the RAM it costs on a 3GB box.
    */
-  val demuxerMaxBackBytesMib = preferenceStore.getInt("demuxer_max_back_bytes_mib", 64)
+  val demuxerMaxBackBytesMib = preferenceStore.getInt("demuxer_max_back_bytes_mib", 48)
 
   /** Pause playback when the buffer runs low and resume after it refills (mpv `cache-pause`). */
   val cachePause = preferenceStore.getBoolean("cache_pause", true)
@@ -185,8 +186,13 @@ class PlayerPreferences(
   /** Seconds the buffer must stay below threshold before pausing (mpv `cache-pause-wait`). */
   val cachePauseWait = preferenceStore.getInt("cache_pause_wait", 3)
 
-  /** Minimum seconds of cache to build before playback starts / after a seek (mpv `demuxer-cache-wait`). */
-  val demuxerCacheWait = preferenceStore.getInt("demuxer_cache_wait", 1)
+  /**
+   * Minimum seconds of cache to build before playback starts / after a seek (mpv
+   * `demuxer-cache-wait`). Default raised from 1 to 2s: on SMB the first read burst is the least
+   * predictable moment, and one extra second there costs almost nothing on a seek while removing
+   * most of the "black frame, then catch up" starts.
+   */
+  val demuxerCacheWait = preferenceStore.getInt("demuxer_cache_wait", 2)
 
   /**
    * User-defined Lua buttons shown on the player overlay. Up to 8 fixed slots (L1..L4, R1..R4).
@@ -237,4 +243,78 @@ class PlayerPreferences(
     deserializer = { it.toDoubleOrNull() ?: -1.0 }
   )
 
+  // ==================== Playback status line (one-line on-screen diagnostics) ====================
+  //
+  // mpv's own OSD cannot be used for this: the HW+ path runs vo=mediacodec_embed, which renders
+  // nothing itself, and the app's separate OSD surface is reserved for subtitles/OSC. The line is
+  // therefore drawn by the app's Compose overlay in the top-left corner.
+
+  /** Master switch for the one-line info overlay drawn in the top-left corner while playing. */
+  val statusLineEnabled = preferenceStore.getBoolean("status_line_enabled", true)
+
+  /** Text size of the status line, in sp. */
+  val statusLineFontSizeSp = preferenceStore.getInt("status_line_font_size_sp", 12)
+
+  /** How often the line is recomputed, in milliseconds. */
+  val statusLineRefreshMs = preferenceStore.getInt("status_line_refresh_ms", 1000)
+
+  /** Draw a translucent plate behind the text so it stays readable over bright scenes. */
+  val statusLineBackground = preferenceStore.getBoolean("status_line_background", true)
+
+  /** Whole-device used memory, read from /proc/meminfo. */
+  val statusLineShowSysMemory = preferenceStore.getBoolean("status_line_mem_sys", true)
+
+  /** This app's own memory footprint (PSS), which is where the mpv cache actually lives. */
+  val statusLineShowAppMemory = preferenceStore.getBoolean("status_line_mem_app", false)
+
+  /** Seconds of demuxer cache ahead of the play position (`demuxer-cache-duration`). */
+  val statusLineShowCache = preferenceStore.getBoolean("status_line_cache", true)
+
+  /** Bytes held in the forward demuxer cache. */
+  val statusLineShowCacheBytes = preferenceStore.getBoolean("status_line_cache_bytes", true)
+
+  /** Bitrate of the current video track, falling back to file size / duration. */
+  val statusLineShowBitrate = preferenceStore.getBoolean("status_line_bitrate", true)
+
+  /** SMB read rate, measured at the SMB boundary rather than at the local proxy hop. */
+  val statusLineShowSmbRate = preferenceStore.getBoolean("status_line_smb", true)
+
+  /** Average SMB rate over the last 10 sampling windows. */
+  val statusLineShowSmbAverage = preferenceStore.getBoolean("status_line_smb_avg", false)
+
+  /** Lowest SMB rate seen in the last 10 sampling windows — where stalls show up first. */
+  val statusLineShowSmbMinimum = preferenceStore.getBoolean("status_line_smb_min", false)
+
+  /** SMB rate divided by the source bitrate: below 1x the cache is guaranteed to drain. */
+  val statusLineShowRatio = preferenceStore.getBoolean("status_line_ratio", true)
+
+  /** Dropped video frames. */
+  val statusLineShowDrops = preferenceStore.getBoolean("status_line_drops", true)
+
+  /** Actual render frame rate (`estimated-vf-fps`). */
+  val statusLineShowFps = preferenceStore.getBoolean("status_line_fps", false)
+
+  /** Playback speed multiplier. */
+  val statusLineShowSpeed = preferenceStore.getBoolean("status_line_speed", true)
+
+  /** Playback percentage. */
+  val statusLineShowProgress = preferenceStore.getBoolean("status_line_progress", true)
+
+  /** Position / total duration. */
+  val statusLineShowTime = preferenceStore.getBoolean("status_line_time", false)
+
+  /** In-place SMB session repairs performed by the healing stream during this file. */
+  val statusLineShowRepairs = preferenceStore.getBoolean("status_line_repairs", true)
+
+  /** Whether the demuxer is idle (cache full, healthy) or reading with nothing arriving (stall). */
+  val statusLineShowCacheState = preferenceStore.getBoolean("status_line_cache_state", false)
+
+  /** Hardware decoder actually in use. */
+  val statusLineShowDecoder = preferenceStore.getBoolean("status_line_decoder", false)
+
+  /** Video resolution as decoded. */
+  val statusLineShowResolution = preferenceStore.getBoolean("status_line_resolution", false)
+
+  /** Bytes pulled from the share for the current file. */
+  val statusLineShowTotalRead = preferenceStore.getBoolean("status_line_total_read", false)
 }

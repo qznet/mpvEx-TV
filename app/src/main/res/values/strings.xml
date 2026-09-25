@@ -156,6 +156,37 @@
   <string name="pref_player_cache_pause_wait_summary">Seconds the buffer must stay low before pausing (avoids pausing on tiny hiccups)</string>
   <string name="pref_player_demuxer_cache_wait">Start buffer</string>
   <string name="pref_player_demuxer_cache_wait_summary">Minimum seconds buffered before playback starts or after a seek</string>
+
+  <!-- Playback status line (one-line overlay in the top-left corner) -->
+  <string name="pref_player_status_line">Status line</string>
+  <string name="pref_player_status_line_enabled">Show status line</string>
+  <string name="pref_player_status_line_enabled_summary">One compact line in the top-left corner: memory, cache, bitrate, SMB speed, dropped frames, speed and progress</string>
+  <string name="pref_player_status_line_font_size">Font size</string>
+  <string name="pref_player_status_line_font_size_summary">Text size of the status line</string>
+  <string name="pref_player_status_line_refresh">Refresh interval</string>
+  <string name="pref_player_status_line_refresh_summary">How often the values are re-read; smaller is more responsive but polls mpv more often</string>
+  <string name="pref_player_status_line_background">Background plate</string>
+  <string name="pref_player_status_line_background_summary">Draw a translucent plate behind the text so bright scenes cannot wash it out</string>
+  <string name="pref_player_status_line_items">Items to show</string>
+  <string name="pref_player_status_line_mem_sys">Device memory</string>
+  <string name="pref_player_status_line_mem_app">App memory</string>
+  <string name="pref_player_status_line_cache">Cache duration</string>
+  <string name="pref_player_status_line_cache_bytes">Cache size</string>
+  <string name="pref_player_status_line_bitrate">Bitrate</string>
+  <string name="pref_player_status_line_smb">SMB speed</string>
+  <string name="pref_player_status_line_smb_avg">SMB average (10s)</string>
+  <string name="pref_player_status_line_smb_min">SMB minimum (10s)</string>
+  <string name="pref_player_status_line_ratio">SMB speed / bitrate</string>
+  <string name="pref_player_status_line_drops">Dropped frames</string>
+  <string name="pref_player_status_line_fps">Render FPS</string>
+  <string name="pref_player_status_line_speed">Playback speed</string>
+  <string name="pref_player_status_line_progress">Progress</string>
+  <string name="pref_player_status_line_time">Position / duration</string>
+  <string name="pref_player_status_line_repairs">SMB repairs</string>
+  <string name="pref_player_status_line_cache_state">Cache read state</string>
+  <string name="pref_player_status_line_decoder">Decoder</string>
+  <string name="pref_player_status_line_resolution">Resolution</string>
+  <string name="pref_player_status_line_total_read">Bytes read</string>
   <string name="pref_player_seeking_title">Seeking</string>
   <string name="pref_player_close_after_eof">Close after the end of playback</string>
   <string name="pref_player_remember_brightness">Remember display brightness</string>

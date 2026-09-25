@@ -161,6 +161,37 @@
   <string name="pref_player_cache_pause_wait_summary">缓存低于阈值后等待几秒再暂停，避免瞬间抖动误暂停</string>
   <string name="pref_player_demuxer_cache_wait">起播缓冲</string>
   <string name="pref_player_demuxer_cache_wait_summary">开始播放或拖动后至少缓冲多少秒再出画面</string>
+
+  <!-- Playback status line (one-line overlay in the top-left corner) -->
+  <string name="pref_player_status_line">播放状态栏</string>
+  <string name="pref_player_status_line_enabled">显示状态栏</string>
+  <string name="pref_player_status_line_enabled_summary">在左上角显示一行精简信息：内存、缓存、码率、SMB 速率、丢帧、倍速与进度</string>
+  <string name="pref_player_status_line_font_size">字体大小</string>
+  <string name="pref_player_status_line_font_size_summary">状态栏文字大小</string>
+  <string name="pref_player_status_line_refresh">刷新间隔</string>
+  <string name="pref_player_status_line_refresh_summary">数值重新读取的间隔；越小越灵敏，但读取 mpv 属性也越频繁</string>
+  <string name="pref_player_status_line_background">文字背景</string>
+  <string name="pref_player_status_line_background_summary">在文字下加一层半透明底，避免亮画面看不清</string>
+  <string name="pref_player_status_line_items">显示项目</string>
+  <string name="pref_player_status_line_mem_sys">整机内存</string>
+  <string name="pref_player_status_line_mem_app">本程序内存</string>
+  <string name="pref_player_status_line_cache">缓存时长</string>
+  <string name="pref_player_status_line_cache_bytes">缓存大小</string>
+  <string name="pref_player_status_line_bitrate">码率</string>
+  <string name="pref_player_status_line_smb">SMB 速率</string>
+  <string name="pref_player_status_line_smb_avg">SMB 平均值（10 秒）</string>
+  <string name="pref_player_status_line_smb_min">SMB 最低值（10 秒）</string>
+  <string name="pref_player_status_line_ratio">SMB 速率 / 码率</string>
+  <string name="pref_player_status_line_drops">丢帧</string>
+  <string name="pref_player_status_line_fps">实际帧率</string>
+  <string name="pref_player_status_line_speed">播放倍速</string>
+  <string name="pref_player_status_line_progress">播放进度</string>
+  <string name="pref_player_status_line_time">时间 / 时长</string>
+  <string name="pref_player_status_line_repairs">SMB 自愈次数</string>
+  <string name="pref_player_status_line_cache_state">缓存读取状态</string>
+  <string name="pref_player_status_line_decoder">解码器</string>
+  <string name="pref_player_status_line_resolution">分辨率</string>
+  <string name="pref_player_status_line_total_read">已读字节</string>
   <string name="pref_player_seeking_title">寻道</string>
   <string name="pref_player_close_after_eof">播放结束后关闭</string>
   <string name="pref_player_remember_brightness">记住屏幕亮度</string>

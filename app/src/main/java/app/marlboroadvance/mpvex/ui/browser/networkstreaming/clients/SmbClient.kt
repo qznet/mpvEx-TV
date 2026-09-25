@@ -404,6 +404,7 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
 
     init {
       activeStream = this
+      SmbStats.onStreamOpened(offset)
     }
 
     override fun read(): Int {
@@ -430,6 +431,8 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
             // check never tears down a stream that is actively reading.
             val now = System.currentTimeMillis()
             if (now - lastSuccessfulIoMs > 1000L) lastSuccessfulIoMs = now
+            // Feed the on-screen transfer counters from the SMB boundary itself (see SmbStats).
+            SmbStats.onBytesRead(read, currentPosition)
             return read
           }
           if (read < 0) return -1 // genuine end of file: let the body finish normally
@@ -515,6 +518,7 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
         }
       }.isSuccess
       if (repaired) repairs = 0 else repairs++
+      if (repaired) SmbStats.onRepairSucceeded()
       Log.w(
         TAG,
         "stream repair at offset $currentPosition (ok=$repaired, " +
@@ -524,7 +528,10 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
 
     override fun close() {
       closed = true
-      if (activeStream === this) activeStream = null
+      if (activeStream === this) {
+        activeStream = null
+        SmbStats.onStreamClosed()
+      }
       runCatching { file.close() }
     }
   }

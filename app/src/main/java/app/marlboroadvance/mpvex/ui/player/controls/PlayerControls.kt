@@ -25,6 +25,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import android.content.res.Configuration.ORIENTATION_PORTRAIT
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -200,6 +201,17 @@ fun PlayerControls(
     derivedStateOf { abs((playbackSpeed ?: 1f) - 1f) > 0.001f }
   }
   val playerTimeToDisappear by playerPreferences.playerTimeToDisappear.collectAsState()
+  // Reserve room for the status line so the top rows slide down instead of overlapping it. Derived
+  // from the configured font size, and zero when the line is off, so nothing changes for anyone
+  // who does not use it.
+  val statusLineEnabled by playerPreferences.statusLineEnabled.collectAsState()
+  val statusLineFontSizeSp by playerPreferences.statusLineFontSizeSp.collectAsState()
+  val statusLineReserve =
+    if (statusLineEnabled) {
+      with(LocalDensity.current) { (statusLineFontSizeSp + 16).sp.toDp() }
+    } else {
+      0.dp
+    }
   val customButtonsBottomMargin by playerPreferences.customButtonsBottomMargin.collectAsState()
   val chapters by viewModel.chapters.collectAsState(persistentListOf())
   val playlistMode by playerPreferences.playlistMode.collectAsState()
@@ -984,7 +996,10 @@ fun PlayerControls(
                 }
               )
               .constrainAs(topLeftControls) {
-                top.linkTo(parent.top, if (isPortrait) spacing.extraLarge else spacing.small)
+                top.linkTo(
+                  parent.top,
+                  (if (isPortrait) spacing.extraLarge else spacing.small) + statusLineReserve,
+                )
                 start.linkTo(parent.start, spacing.large)
                 if (isPortrait) {
                   width = Dimension.fillToConstraints
@@ -1051,7 +1066,7 @@ fun PlayerControls(
                 }
               )
               .constrainAs(topRightControls) {
-                top.linkTo(parent.top, spacing.small)
+                top.linkTo(parent.top, spacing.small + statusLineReserve)
                 end.linkTo(parent.end, spacing.large)
               },
         ) {
@@ -1253,6 +1268,21 @@ fun PlayerControls(
                 .padding(horizontal = spacing.medium),
           )
         }
+
+        // One-line diagnostics in the top-left corner. Deliberately outside every
+        // AnimatedVisibility: unlike the controls it stays on screen the whole time, which is
+        // exactly when the numbers matter (a stream misbehaving is not a moment when the user
+        // reaches for the controls).
+        val statusLine = createRef()
+        PlayerStatusLine(
+          modifier =
+            Modifier.constrainAs(statusLine) {
+              top.linkTo(parent.top, spacing.small)
+              start.linkTo(parent.start, spacing.large)
+              end.linkTo(parent.end, spacing.large)
+              width = Dimension.preferredWrapContent
+            },
+        )
 
       }
     }

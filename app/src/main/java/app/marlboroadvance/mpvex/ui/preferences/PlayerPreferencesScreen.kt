@@ -21,6 +21,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.preferences.PlayerPreferences
+import app.marlboroadvance.mpvex.preferences.preference.Preference
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.ui.player.PlayerOrientation
@@ -422,6 +423,184 @@ object PlayerPreferencesScreen : Screen {
             }
           }
 
+          // Playback status line (one-line overlay in the top-left corner)
+          item {
+            PreferenceSectionHeader(title = stringResource(R.string.pref_player_status_line))
+          }
+
+          item {
+            PreferenceCard {
+              val statusLineEnabled by preferences.statusLineEnabled.collectAsState()
+              SwitchPreference(
+                value = statusLineEnabled,
+                onValueChange = preferences.statusLineEnabled::set,
+                title = { Text(stringResource(R.string.pref_player_status_line_enabled)) },
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_status_line_enabled_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
+
+              PreferenceDivider()
+
+              val statusLineFontSizeSp by preferences.statusLineFontSizeSp.collectAsState()
+              SliderPreference(
+                value = statusLineFontSizeSp.toFloat(),
+                onValueChange = { preferences.statusLineFontSizeSp.set(it.roundToInt()) },
+                title = { Text(stringResource(R.string.pref_player_status_line_font_size)) },
+                valueRange = 8f..28f,
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_status_line_font_size_summary) +
+                      " ($statusLineFontSizeSp sp)",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onSliderValueChange = { preferences.statusLineFontSizeSp.set(it.roundToInt()) },
+                sliderValue = statusLineFontSizeSp.toFloat(),
+              )
+
+              PreferenceDivider()
+
+              val statusLineRefreshMs by preferences.statusLineRefreshMs.collectAsState()
+              SliderPreference(
+                value = statusLineRefreshMs.toFloat(),
+                onValueChange = { preferences.statusLineRefreshMs.set(it.roundToInt()) },
+                title = { Text(stringResource(R.string.pref_player_status_line_refresh)) },
+                valueRange = 250f..2000f,
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_status_line_refresh_summary) +
+                      " ($statusLineRefreshMs ms)",
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+                onSliderValueChange = { preferences.statusLineRefreshMs.set(it.roundToInt()) },
+                sliderValue = statusLineRefreshMs.toFloat(),
+              )
+
+              PreferenceDivider()
+
+              val statusLineBackground by preferences.statusLineBackground.collectAsState()
+              SwitchPreference(
+                value = statusLineBackground,
+                onValueChange = preferences.statusLineBackground::set,
+                title = { Text(stringResource(R.string.pref_player_status_line_background)) },
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_status_line_background_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
+            }
+          }
+
+          item {
+            PreferenceSectionHeader(title = stringResource(R.string.pref_player_status_line_items))
+          }
+
+          item {
+            PreferenceCard {
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowSysMemory,
+                titleRes = R.string.pref_player_status_line_mem_sys,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowAppMemory,
+                titleRes = R.string.pref_player_status_line_mem_app,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowCache,
+                titleRes = R.string.pref_player_status_line_cache,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowCacheBytes,
+                titleRes = R.string.pref_player_status_line_cache_bytes,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowBitrate,
+                titleRes = R.string.pref_player_status_line_bitrate,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowSmbRate,
+                titleRes = R.string.pref_player_status_line_smb,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowSmbAverage,
+                titleRes = R.string.pref_player_status_line_smb_avg,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowSmbMinimum,
+                titleRes = R.string.pref_player_status_line_smb_min,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowRatio,
+                titleRes = R.string.pref_player_status_line_ratio,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowDrops,
+                titleRes = R.string.pref_player_status_line_drops,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowFps,
+                titleRes = R.string.pref_player_status_line_fps,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowSpeed,
+                titleRes = R.string.pref_player_status_line_speed,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowProgress,
+                titleRes = R.string.pref_player_status_line_progress,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowTime,
+                titleRes = R.string.pref_player_status_line_time,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowRepairs,
+                titleRes = R.string.pref_player_status_line_repairs,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowCacheState,
+                titleRes = R.string.pref_player_status_line_cache_state,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowDecoder,
+                titleRes = R.string.pref_player_status_line_decoder,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowResolution,
+                titleRes = R.string.pref_player_status_line_resolution,
+              )
+              PreferenceDivider()
+              StatusLineItemSwitch(
+                preference = preferences.statusLineShowTotalRead,
+                titleRes = R.string.pref_player_status_line_total_read,
+              )
+            }
+          }
+
           // Gestures Section
           item {
             PreferenceSectionHeader(title = stringResource(R.string.pref_player_gestures))
@@ -594,4 +773,18 @@ object PlayerPreferencesScreen : Screen {
       }
     }
   }
+}
+
+/** One "show this item" switch of the playback status line. */
+@Composable
+private fun StatusLineItemSwitch(
+  preference: Preference<Boolean>,
+  titleRes: Int,
+) {
+  val enabled by preference.collectAsState()
+  SwitchPreference(
+    value = enabled,
+    onValueChange = preference::set,
+    title = { Text(stringResource(titleRes)) },
+  )
 }
