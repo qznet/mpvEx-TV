@@ -389,6 +389,35 @@ class PlayerActivity :
   /** Escalating recreates the Activity (restarts playback), so require repeated timeouts. */
   private val STALL_WEDGED_TIMEOUTS = 2
   private val STALL_HEARTBEAT_MS = 30_000L
+  // ---- Demuxer cache guard: repair the network session BEFORE the buffer runs dry ----------
+  //
+  // Signals taken from what mpv actually exposes (verified in player/command.c):
+  //  - `cache-speed` (int64, bytes/s over a 1s window) is the read rate between the cache and the
+  //    lower (network) layer; mpv documents it as the same thing as
+  //    demuxer-cache-state/raw-input-rate. It is the one signal that says "bytes are arriving"
+  //    rather than "the buffer happens to be large".
+  //  - `demuxer-cache-idle` means "the cache is filled to the requested amount and mpv is NOT
+  //    reading more data". That is the healthy sawtooth: mpv stops reading on purpose once the
+  //    buffer target is reached, and from then on the cache shrinks from consumption alone. Never
+  //    act on that.
+  //  - A dead reader (session reaped by the NAS or router, read parked on a half-open socket)
+  //    shows the opposite: not idle (mpv still wants data) with a ~zero input rate.
+  //  - `demuxer-cache-duration` / `demuxer-cache-time` are only logged, never decided on: mpv's own
+  //    manual calls the duration guess "very unreliable" and "often not available at all".
+  /** Input rate at or below which the network layer counts as producing nothing. */
+  private val CACHE_GUARD_STALL_BPS = 64 * 1024
+  /** How long the input rate must stay there (while mpv still wants data) before repairing. */
+  private val CACHE_GUARD_STAGNANT_MS = 8_000L
+  /** Minimum gap between proactive transport repairs. */
+  private val CACHE_GUARD_COOLDOWN_MS = 30_000L
+  /** Repairs allowed in one burst; a long healthy stretch makes the budget fresh again. */
+  private val CACHE_GUARD_MAX = 6
+  private val CACHE_GUARD_BUDGET_REFRESH_MS = 300_000L
+  /** Since when the input rate has been stagnant, or 0 when it is healthy. */
+  private var cacheStagnantSinceMs = 0L
+  private var lastCacheGuardMs = 0L
+  private var cacheGuardRepairs = 0
+  private var cacheGuardExhaustedLogged = false
   private var savePlaybackStateJob: kotlinx.coroutines.Job? = null // Track ongoing save job
   private var savePlaybackStateJobIdentifier: String? = null // Media identifier the ongoing save belongs to
   private var audioFocusActive = false // Whether we currently hold audio focus
@@ -1010,6 +1039,12 @@ class PlayerActivity :
       stallGaveUpNotified = false
     }
     recoveryReloadPending = false
+    // Per-stream cache-guard state: the input-rate window and the repair budget describe the
+    // stream that is being replaced, not the Activity.
+    cacheStagnantSinceMs = 0L
+    lastCacheGuardMs = 0L
+    cacheGuardRepairs = 0
+    cacheGuardExhaustedLogged = false
   }
 
   private fun tickStallWatchdog() {
@@ -1075,6 +1110,10 @@ class PlayerActivity :
         stallRebuilds = 0
         stallGaveUpNotified = false
       }
+      // Playback is running and consuming the buffer: the only place a proactive transport repair
+      // may be issued from (see [tickCacheGuard]). It runs AFTER the healthy bookkeeping above, so
+      // a repair can never be mistaken for a stall.
+      tickCacheGuard(now, path)
       return
     }
     // time-pos is frozen. A pause the user asked for (directly, via PiP, via the
@@ -1175,6 +1214,113 @@ class PlayerActivity :
     } else {
       recoverFromStall(stallAttempts)
     }
+  }
+
+  /**
+   * Proactive transport repair: notice that the NETWORK LAYER has stopped producing bytes while
+   * mpv still wants them, and have that session rebuilt in place — before the demuxer cache is
+   * drained.
+   *
+   * Why the input rate and not a cache threshold: a buffer threshold (10% of the target, say)
+   * only trips once the failure is already tens of seconds old and the remaining margin is thin,
+   * so the remedy has to be near-instant to avoid a visible stall. The input rate instead reads
+   * zero within the first seconds of the failure, while tens of seconds of video are still
+   * buffered, so the repair has room to complete unseen. It also needs no threshold of its own:
+   * a starved reader IS the failure.
+   *
+   * The repair itself keeps the HTTP body alive (see SmbClient.requestStreamRepair), so nothing
+   * about playback restarts — no seek, no decoder rebuild, no skipped content, no reload toast.
+   *
+   * Only the local proxy can be repaired this way; for a local file, a direct URL or a stream with
+   * no in-place repair this returns without touching anything.
+   *
+   * Deliberately disjoint from the stall ladder: it runs only while `time-pos` is ADVANCING. Once
+   * playback has actually frozen the verified ladder (nudge -> source reload -> give up) owns the
+   * situation and must not be raced by this.
+   */
+  private fun tickCacheGuard(now: Long, path: String) {
+    val streamId = proxyStreamId(path)
+    if (streamId == null) {
+      cacheStagnantSinceMs = 0L
+      return
+    }
+    // An early EOF means the source is already gone (the premature-EOF recovery owns that), and a
+    // seek rebuilds the stream by itself; in both cases a zero input rate is expected, not a fault.
+    if (MPVLib.getPropertyBoolean("eof-reached") == true ||
+      MPVLib.getPropertyBoolean("seeking") == true
+    ) {
+      cacheStagnantSinceMs = 0L
+      return
+    }
+    // null means the property is unavailable -> do not guess.
+    val idle = MPVLib.getPropertyBoolean("demuxer-cache-idle")
+    val speed = MPVLib.getPropertyInt("cache-speed")
+    if (idle == null || speed == null) {
+      cacheStagnantSinceMs = 0L
+      return
+    }
+    if (idle) {
+      // mpv stopped reading because the buffer is at its target: the healthy sawtooth. The cache
+      // shrinking from consumption alone is expected here, so this is exactly the case that must
+      // NOT be repaired.
+      cacheStagnantSinceMs = 0L
+      return
+    }
+    if (speed > CACHE_GUARD_STALL_BPS) {
+      cacheStagnantSinceMs = 0L
+      return
+    }
+    if (cacheStagnantSinceMs == 0L) {
+      cacheStagnantSinceMs = now
+      return
+    }
+    if (now - cacheStagnantSinceMs < CACHE_GUARD_STAGNANT_MS) return
+    if (cacheGuardRepairs > 0 && now - lastCacheGuardMs >= CACHE_GUARD_BUDGET_REFRESH_MS) {
+      // A long healthy stretch since the last repair: the budget counts a burst, not a lifetime.
+      cacheGuardRepairs = 0
+      cacheGuardExhaustedLogged = false
+    }
+    if (cacheGuardRepairs >= CACHE_GUARD_MAX) {
+      if (!cacheGuardExhaustedLogged) {
+        cacheGuardExhaustedLogged = true
+        Log.w(
+          TAG,
+          "cache guard: $CACHE_GUARD_MAX transport repairs already used for this stream, " +
+            "standing down (the stall ladder is the only recovery left)",
+        )
+      }
+      return
+    }
+    if (now - lastCacheGuardMs < CACHE_GUARD_COOLDOWN_MS) return
+    lastCacheGuardMs = now
+    // Require a fresh window after every attempt, successful or not.
+    cacheStagnantSinceMs = now
+    val cachedSec =
+      MPVLib.getPropertyDouble("demuxer-cache-duration")?.let { "%.1f".format(it) } ?: "n/a"
+    val fillPct = MPVLib.getPropertyInt("cache-buffering-state")?.toString() ?: "n/a"
+    val repaired =
+      app.marlboroadvance.mpvex.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+        .activeInstanceOrNull()
+        ?.requestStreamRepair(streamId) == true
+    if (repaired) cacheGuardRepairs++
+    Log.w(
+      TAG,
+      "cache guard: no input for ${CACHE_GUARD_STAGNANT_MS / 1000}s while mpv wants data " +
+        "(rate=${speed / 1024}KiB/s idle=$idle pos=${lastProgressTimePos}s cached=${cachedSec}s " +
+        "fill=${fillPct}%) -> in-place transport repair " +
+        "#$cacheGuardRepairs/$CACHE_GUARD_MAX (accepted=$repaired)",
+    )
+  }
+
+  /**
+   * The proxy stream id behind [path], or null when [path] is not served by our local proxy (a
+   * local file, a direct URL, a resume, ...). Only a proxied source has a session that can be
+   * rebuilt underneath a live HTTP body, so everything else short-circuits on this.
+   */
+  private fun proxyStreamId(path: String?): String? {
+    if (path == null) return null
+    if (!path.startsWith("http://127.0.0.1:") && !path.startsWith("http://localhost:")) return null
+    return path.substringAfterLast('/').substringBefore('?').takeIf { it.isNotBlank() }
   }
 
   /** Periodic liveness log so "the watchdog never ran" can be told apart from "it ran and

@@ -4,6 +4,7 @@ import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClient
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.NetworkClientFactory
+import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.SmbClient
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +49,14 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
         }
       }
     }
+
+    /**
+     * The running proxy, or null when none was ever started (nothing is being proxied).
+     *
+     * Unlike [getInstance] this never creates and starts the server, so a caller on the playback
+     * path can ask "is anything proxied?" without a side effect.
+     */
+    fun activeInstanceOrNull(): NetworkStreamingProxy? = instance
 
     fun stopInstance() {
       synchronized(this) {
@@ -184,6 +193,32 @@ class NetworkStreamingProxy private constructor() : NanoHTTPD("127.0.0.1", 0) {
     activeStreams[newStreamId] = oldInfo.copy(client = freshClient)
     Log.w(TAG, "rotateStreamId: $oldStreamId -> $newStreamId (conn $connId)")
     return "http://127.0.0.1:$listeningPort/$newStreamId"
+  }
+
+  /**
+   * Ask the stream behind [streamId] to rebuild its network session IN PLACE, keeping the HTTP
+   * response body alive. This is the gentle form of "reload the cache": the player keeps playing
+   * from the data it has already buffered while the session is rebuilt underneath it, so nothing
+   * on screen changes, no seek is issued and no decoder is re-initialised.
+   *
+   * Used by the playback watchdog the moment the network layer stops producing bytes while the
+   * demuxer still wants data — the start of the drain towards the freeze, at a point where 50+
+   * seconds of buffered video are usually still in hand. Repairing then costs nothing visible;
+   * waiting for the cache to hit zero costs the viewer the video.
+   *
+   * @return true when a live stream accepted the request. False for an unknown stream id, or for a
+   *   client without an in-place repair (e.g. a protocol whose stream cannot be reopened), in which
+   *   case the caller must leave the existing recovery ladder to deal with it.
+   */
+  fun requestStreamRepair(streamId: String): Boolean {
+    val streamInfo = activeStreams[streamId] ?: return false
+    val client = streamInfo.client
+    if (client is SmbClient) return client.requestStreamRepair()
+    Log.w(
+      TAG,
+      "requestStreamRepair: ${client.javaClass.simpleName} has no in-place repair (stream $streamId)",
+    )
+    return false
   }
 
   /**
