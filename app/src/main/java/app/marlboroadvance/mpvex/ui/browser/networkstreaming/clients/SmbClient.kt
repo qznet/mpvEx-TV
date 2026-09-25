@@ -1,5 +1,6 @@
 package app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients
 
+import android.util.Log
 import app.marlboroadvance.mpvex.domain.network.NetworkConnection
 import app.marlboroadvance.mpvex.domain.network.NetworkFile
 import com.hierynomus.msfscc.fileinformation.FileBasicInformation
@@ -17,32 +18,58 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import java.io.BufferedInputStream
+import java.io.IOException
 import java.io.InputStream
 import java.util.EnumSet
 import java.util.concurrent.TimeUnit
 
 class SmbClient(private val connection: NetworkConnection) : NetworkClient {
   companion object {
+    private const val TAG = "SmbClient"
+
     @Volatile
     private var sharedSmbClient: SMBClient? = null
 
-    // Keep SMB operation timeouts short enough that a half-open / idle-dropped
-    // connection (server or router silently killed an idle TCP after the demuxer
-    // stopped reading) surfaces a SocketTimeoutException in ~15s instead of pinning
-    // the request thread for a full minute. The 60s value froze playlist switching.
-    private const val SMB_TIMEOUT_MS = 15000L
+    // Bounds every SMB wait: the socket read timeout AND the deadline for connect/keepAlive/share
+    // operations. A half-open session (the server or router silently killed an idle TCP while the
+    // demuxer was reading purely from its cache) now surfaces an error in ~8s instead of pinning
+    // the request thread for a full minute. Because a stalled read is a stall with zero bytes
+    // arriving, this value also sets how much of mpv's demuxer cache a single drop can eat: every
+    // second of it is a second of playback drained with nothing coming in.
+    // Deliberately not tightened further — listing a large directory over a slow share must still
+    // be allowed to finish.
+    private const val SMB_TIMEOUT_MS = 8000L
 
-    // If a share has sat idle longer than this, proactively reconnect before the next
-    // operation instead of risking a block on a connection the server/router dropped
-    // while the player was reading purely from its demuxer cache. This is what turns
-    // "switch to next episode hangs ~15s then recovers" into a near-instant switch.
-    private const val IDLE_RECONNECT_THRESHOLD_MS = 25000L
+    // How long a share may sit idle before the next operation proactively reconnects instead of
+    // risking a block on a connection the server/router dropped while the player read purely from
+    // its demuxer cache. Lowered from 25s, but it MUST stay above NetworkStreamingProxy's
+    // KEEPALIVE_INTERVAL_MS (15s): the keepalive refreshes the idle timer through withShare, so a
+    // threshold below the keepalive cadence would make every single keepalive tick judge itself
+    // "idle too long" and tear down the session an active stream is reading from.
+    private const val IDLE_RECONNECT_THRESHOLD_MS = 20000L
+
+    /**
+     * How many consecutive mid-stream read failures a committed HTTP body may repair before it is
+     * allowed to end.
+     *
+     * This is the difference between "the cache quietly refills" and "the viewer has to reopen the
+     * video". NanoHTTPD copies the body from our stream on its own thread, so if the stream throws,
+     * the body simply ends — and mpv reads a finished body as end-of-file at whatever position it
+     * happened to reach, then (with `keep-open`) pauses for good. Reconnecting in place and
+     * continuing from the same offset keeps the body alive instead. Bounded so a share that is
+     * genuinely gone still gives up rather than looping forever.
+     */
+    private const val STREAM_REOPEN_MAX_ATTEMPTS = 3
+
+    /** Hard cap on one mid-stream repair (reconnect + reopen) so a reader can never hang. */
+    private const val STREAM_REOPEN_TIMEOUT_MS = 12000L
 
     // Detached IO scope used to tear down dead/superseded connections off the caller's
     // thread: on a half-open socket smbj's graceful LOGOFF/tree-disconnect blocks until
@@ -294,46 +321,118 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
 
   override suspend fun getFileStream(path: String, offset: Long): Result<InputStream> =
     withContext(Dispatchers.IO) {
-      withShare { ds ->
-        val file = ds.openFile(resolveSharePath(path), EnumSet.of(AccessMask.GENERIC_READ), null, EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ), SMB2CreateDisposition.FILE_OPEN, null)
-
-        // Optimized Seekable Raw Stream
-        val rawSeekable = object : InputStream() {
+      val relativePath = resolveSharePath(path)
+      withShare { ds -> openReadOnlyFile(ds, relativePath) }.map { initialFile ->
+        // The body of this HTTP response is committed to the client the moment serve() returns,
+        // and NanoHTTPD copies it from this stream on its own thread. So if the stream throws, the
+        // body ENDS — and mpv reads a finished body as end-of-file at whatever position it had
+        // reached, reports a truncated file, and (with `keep-open`) pauses for good. It cannot
+        // re-request a body it already finished, which is why a dropped SMB session used to be
+        // terminal for the session.
+        //
+        // Repair the session in place and carry on from the same offset instead: the body never
+        // ends early, mpv keeps filling its demuxer cache, and the viewer sees nothing at all.
+        // This is the same capability the players that read SMB directly (Kodi/VLC) get for free
+        // from their own I/O layer.
+        val raw: InputStream = object : InputStream() {
           private var currentPosition = offset
+          private var file: com.hierynomus.smbj.share.File = initialFile
+          private var repairs = 0
+          @Volatile private var closed = false
           override fun read(): Int {
             val b = ByteArray(1)
             return if (read(b, 0, 1) == 1) b[0].toInt() and 0xFF else -1
           }
           override fun read(b: ByteArray, off: Int, len: Int): Int {
-            return try {
-              val read = file.read(b, currentPosition, off, len)
-              if (read > 0) {
-                currentPosition += read
-                // These proxy reads happen OUTSIDE withShare, so this is the only place that
-                // reflects real streaming I/O. Refresh the idle timer (throttled) so the
-                // idle-reconnect check never tears down a stream that is actively reading.
-                val now = System.currentTimeMillis()
-                if (now - lastSuccessfulIoMs > 1000L) lastSuccessfulIoMs = now
-              } else if (read == 0) {
-                // A 0 read on a half-dead socket means no data is coming; flag the stream so
-                // the next withShare() forces a reconnect instead of blocking on the dead
-                // session (isConnected() would still claim it is alive).
-                streamBroken = true
+            if (closed) return -1
+            while (true) {
+              try {
+                val read = file.read(b, currentPosition, off, len)
+                if (read > 0) {
+                  currentPosition += read
+                  // These reads happen OUTSIDE withShare, so this is the only place that reflects
+                  // real streaming I/O. Refresh the idle timer (throttled) so the idle-reconnect
+                  // check never tears down a stream that is actively reading.
+                  val now = System.currentTimeMillis()
+                  if (now - lastSuccessfulIoMs > 1000L) lastSuccessfulIoMs = now
+                  return read
+                }
+                if (read < 0) return -1 // genuine end of file: let the body finish normally
+                // read == 0: the session looks alive but no data is arriving. Treat it as a stall.
+              } catch (e: Exception) {
+                // The SMB session died mid-stream; fall through to the repair path below.
               }
-              read
-            } catch (e: Exception) {
-              // The SMB session died mid-stream; surface it so withShare() reconnects on the
-              // next operation rather than trusting the stale isConnected() flag.
+              // Reached when a read failed or returned no data on a session that still claims to
+              // be connected. Tell the control path so the NEXT withShare() also reconnects, then
+              // repair in place and retry — the response body stays alive.
               streamBroken = true
-              throw e
+              if (repairs >= STREAM_REOPEN_MAX_ATTEMPTS) {
+                // Unrepairable even after repeated attempts: end the body. The premature-EOF
+                // recovery in PlayerActivity then takes over as the last resort.
+                throw IOException("SMB stream unrecoverable at offset $currentPosition ($relativePath)")
+              }
+              repair(relativePath)
             }
           }
-          override fun close() { try { file.close() } catch (_: Exception) {} }
+
+          /**
+           * Rebuilds the session and re-opens the file so the body can continue from
+           * [currentPosition]. [read] is blocking, so the suspend reconnect is bridged with
+           * runBlocking on the response's own thread.
+           */
+          private fun repair(path: String) {
+            repairs++
+            val repaired = runCatching {
+              runBlocking {
+                withTimeout(STREAM_REOPEN_TIMEOUT_MS) {
+                  val share = reopenStreamingShare().getOrThrow()
+                  val fresh = openReadOnlyFile(share, path)
+                  val stale = file
+                  file = fresh
+                  runCatching { stale.close() }
+                }
+              }
+            }.isSuccess
+            Log.w(TAG, "stream repair #$repairs at offset $currentPosition (ok=$repaired)")
+          }
+          override fun close() {
+            closed = true
+            runCatching { file.close() }
+          }
         }
-        
-        // Wrap with 1MB buffer for high-speed sequential access (Restore the dozens of MB/s speed)
-        BufferedInputStream(rawSeekable, 1024 * 1024)
+        // Wrap with 1MB buffer for high-speed sequential access (restores the dozens of MB/s).
+        val buffered: InputStream = BufferedInputStream(raw, 1024 * 1024)
+        buffered
       }
+    }
+
+  /** Opens [relativePath] read-only; shared by the first open and the mid-stream repair path. */
+  private fun openReadOnlyFile(
+    share: DiskShare,
+    relativePath: String,
+  ): com.hierynomus.smbj.share.File =
+    share.openFile(
+      relativePath,
+      EnumSet.of(AccessMask.GENERIC_READ),
+      null,
+      EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
+      SMB2CreateDisposition.FILE_OPEN,
+      null,
+    )
+
+  /**
+   * Tears the dead session down and builds a fresh one so a live HTTP body that lost its session
+   * can keep reading from where it stopped. The caller turns a failure into a give-up, which ends
+   * the body.
+   */
+  private suspend fun reopenStreamingShare(): Result<DiskShare> =
+    try {
+      disconnect()
+      withTimeout(SMB_TIMEOUT_MS) { connect().getOrThrow() }
+      val share = diskShare ?: throw IllegalStateException("SMB not connected after reopen")
+      Result.success(share)
+    } catch (e: Exception) {
+      Result.failure(e)
     }
 
   override suspend fun deleteFile(path: String): Result<Unit> =
