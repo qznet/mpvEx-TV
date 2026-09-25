@@ -14,20 +14,20 @@ import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
 import com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransportFactory
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.TimeoutCancellationException
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.EnumSet
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 class SmbClient(private val connection: NetworkConnection) : NetworkClient {
@@ -80,10 +80,31 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
      */
     private const val STREAM_REOPEN_TOTAL_MAX = 60
 
-    // Detached IO scope used to tear down dead/superseded connections off the caller's
-    // thread: on a half-open socket smbj's graceful LOGOFF/tree-disconnect blocks until
-    // SO_TIMEOUT, which would otherwise re-introduce the very freeze we're removing.
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Every close that SENDS A PACKET (a file handle, and the connection's own lease teardown) runs
+    // here, one at a time, and never on the caller's thread. Two reasons:
+    //  - a graceful close on a half-open socket blocks until SO_TIMEOUT, which must not happen on
+    //    the caller's thread (it used to re-introduce the freeze this class removes);
+    //  - smbj's async transport throws IllegalStateException("Transport is not connected") from its
+    //    OWN io thread when the transport goes down while a write is still queued, and that
+    //    exception used to kill the whole process (see GlobalExceptionHandler). Keeping every
+    //    packet-sending close on one thread means two of them can never overlap each other.
+    private val teardownExecutor: ExecutorService =
+      Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "smb-teardown").apply { isDaemon = true }
+      }
+
+    /** Closes an SMB handle off the caller's thread, serialized against every other close. */
+    private fun closeHandleAsync(handle: com.hierynomus.smbj.share.File?) {
+      if (handle == null) return
+      teardownExecutor.execute { runCatching { handle.close() } }
+    }
+
+    /**
+     * How long [SmbClient.connect] waits for a teardown that is still in flight: enough for the
+     * normal (fast) close to have retired the pool entry, bounded so that a pathological teardown
+     * — releasing leased directory handles can touch the socket — cannot hold a reconnect hostage.
+     */
+    private const val TEARDOWN_AWAIT_MS = 3000L
 
     private fun getOrCreateClient(): SMBClient {
       return sharedSmbClient ?: synchronized(this) {
@@ -142,6 +163,11 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
   @Volatile
   private var activeStream: HealingStream? = null
 
+  // The teardown queued by the last [disconnect], if any. [connect] waits for it (bounded) so smbj's
+  // connection pool cannot hand the connection being closed back to us. Written under [connectMutex].
+  @Volatile
+  private var pendingTeardown: Future<*>? = null
+
   private var smbConnection: Connection? = null
   private var session: Session? = null
   private var diskShare: DiskShare? = null
@@ -159,8 +185,12 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
           withContext(Dispatchers.IO) {
             try {
               if (isConnected()) return@withContext Result.success(Unit)
-              // A previous half-open connection may still be lingering; tear it down first.
-              disconnect()
+              // A previous half-open connection may still be lingering; tear it down first, and let
+              // the teardown finish before asking for a connection — otherwise smbj's pool hands
+              // the closing one straight back and the "fresh" session lands on the dead socket
+              // (see [disconnectLocked] / [awaitTeardown]).
+              disconnectLocked()
+              awaitTeardown(TEARDOWN_AWAIT_MS)
               val client = getOrCreateClient()
               val resolvedAddress = try {
                 withTimeout(5000) { java.net.InetAddress.getByName(connection.host) }
@@ -182,27 +212,57 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
               diskShare = session!!.connectShare(shareName) as DiskShare
               Result.success(Unit)
             } catch (e: Exception) {
-              disconnect(); Result.failure(e)
+              disconnectLocked(); Result.failure(e)
             }
           }
         }
       } catch (e: TimeoutCancellationException) {
-        disconnect()
+        disconnectLocked()
         Result.failure(Exception("SMB connect timed out after ${SMB_TIMEOUT_MS}ms", e))
       }
     }
 
-  override suspend fun disconnect() {
-    // Null the references first, then close the old objects on a detached scope. A graceful
-    // close on a half-open socket sends LOGOFF/tree-disconnect and blocks until SO_TIMEOUT;
-    // doing it inline would freeze the caller (and any reconnect that runs through here).
-    val oldShare = diskShare; val oldSession = session; val oldConnection = smbConnection
+  override suspend fun disconnect() = connectMutex.withLock { disconnectLocked() }
+
+  /**
+   * Queues a teardown for the current connection. MUST run with [connectMutex] held.
+   *
+   * Two things are deliberate here, and the first one is what made a mid-stream repair silently
+   * worthless:
+   *
+   *  - the connection is closed with **force**, and waits for nothing on the caller's thread.
+   *    `Connection.close()` without force only releases one lease on a `Pooled` counter and returns
+   *    silently while another lease is outstanding, so after one leaked lease the connection can
+   *    never be closed again and stays in `SMBClient`'s `host:port` pool forever.
+   *  - `close(true)` skips the graceful LOGOFF/TREE_DISCONNECT — the part that blocks on a half-open
+   *    socket — so it sends no packet and returns as soon as the leased directory handles are
+   *    released. [awaitTeardown] is what keeps the pool entry from being handed to the next connect.
+   *
+   * The share/session objects are intentionally NOT closed: with the transport already down, a
+   * graceful close could only write packets onto a dead transport — and that write is what smbj
+   * punishes with IllegalStateException from its own io thread. Closing the TCP connection is what
+   * releases the server-side session, which is the same end state a LOGOFF produces.
+   */
+  private fun disconnectLocked() {
+    val oldConnection = smbConnection
     diskShare = null; session = null; smbConnection = null
-    ioScope.launch {
-      try { oldShare?.close() } catch (_: Exception) {}
-      try { oldSession?.close() } catch (_: Exception) {}
-      try { oldConnection?.close() } catch (_: Exception) {}
-    }
+    if (oldConnection == null) return
+    pendingTeardown = teardownExecutor.submit(Runnable { runCatching { oldConnection.close(true) } })
+  }
+
+  /**
+   * Waits (bounded) for a queued teardown to finish.
+   *
+   * Without this, `SMBClient` — which pools connections in a `host:port` table and hands the cached
+   * `Connection` back to the next `connect()` as long as its transport still claims to be connected
+   * — would serve the connection we are closing to the reconnect that immediately follows, putting
+   * the "fresh" session on the dead socket. Blocking the reconnect briefly is the cheaper trade:
+   * the caller of [disconnect] is never the one waiting.
+   */
+  private fun awaitTeardown(timeoutMs: Long) {
+    val teardown = pendingTeardown ?: return
+    pendingTeardown = null
+    runCatching { teardown.get(timeoutMs, TimeUnit.MILLISECONDS) }
   }
 
   override fun isConnected(): Boolean =
@@ -486,8 +546,7 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
     fun requestRepair(): Boolean {
       if (closed) return false
       repairRequested = true
-      val stale = file
-      ioScope.launch { runCatching { stale.close() } }
+      closeHandleAsync(file)
       return true
     }
 
@@ -513,7 +572,11 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
             val fresh = openReadOnlyFile(share, relativePath)
             val stale = file
             file = fresh
-            runCatching { stale.close() }
+            // Release the old handle OFF this thread: it is itself a close-packet, it must not block
+            // the reader (the body continues on [fresh] right away), and it must never overlap
+            // another close. The reconnect above already force-closed the old connection, so this
+            // write can only fail — harmlessly, on the teardown thread.
+            closeHandleAsync(stale)
           }
         }
       }.isSuccess
@@ -532,7 +595,9 @@ class SmbClient(private val connection: NetworkConnection) : NetworkClient {
         activeStream = null
         SmbStats.onStreamClosed()
       }
-      runCatching { file.close() }
+      // Same rule as every other close: the body ending must not block on a socket that may be
+      // half-open, and its close-packet must not race a teardown (see [teardownExecutor]).
+      closeHandleAsync(file)
     }
   }
 
