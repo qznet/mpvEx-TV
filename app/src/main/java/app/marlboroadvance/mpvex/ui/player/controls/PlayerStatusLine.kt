@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.sp
 import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.clients.SmbStats
-import is.xyz.mpv.MPVLib
+import `is`.xyz.mpv.MPVLib
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -31,18 +31,20 @@ import org.koin.compose.koinInject
 /**
  * One compact line of live playback diagnostics, drawn in the top-left corner of the player.
  *
- * This cannot be done with mpv's own OSD: the HW+ path runs `vo=mediacodec_embed`, which renders
- * nothing itself, and the app's dedicated OSD surface is reserved for subtitles/OSC. So the line is
- * drawn by the app's Compose overlay, which also makes it configurable (items, font size, refresh
- * rate) without touching playback.
+ * Drawn by the app's Compose overlay instead of mpv's OSD because:
+ *  - the SMB counters ([SmbStats]) only exist inside the app — mpv's `cache-speed` measures the
+ *    loopback hop to the local HTTP proxy, so it cannot show the real share-side throughput;
+ *  - the per-item switches, font size and refresh rate are app settings anyway.
+ * (mpv's OSD does work on this fork's HW+ path: the app hands mpv a second ANativeWindow via
+ * `android-osd-wid` and mpv renders OSD/OSC/subtitles into it. That surface sits *below* the
+ * Compose overlay, so a Lua OSD line and this one overlap if both are in the top-left corner —
+ * use one or the other.)
  *
  * Two families of numbers are shown and they answer different questions:
  *  - mpv-side state (`cache-*`, drops, fps, speed, progress) — what the player is doing;
  *  - SMB-side throughput ([SmbStats], read at the share itself) — whether bytes are still arriving.
- *    mpv's `cache-speed` measures the loopback hop to the local HTTP proxy and over-reports whenever
- *    a read is served from the proxy's buffered pre-read, so it cannot distinguish "slow NAS" from
- *    "slow proxy". The `ratio` field (SMB rate / source bitrate) is the decisive one: below 1x the
- *    cache is guaranteed to drain, however healthy everything else looks.
+ *    The `ratio` field (SMB rate / source bitrate) is the decisive one: below 1x the cache is
+ *    guaranteed to drain, however healthy everything else looks.
  */
 @Composable
 fun PlayerStatusLine(modifier: Modifier = Modifier) {
