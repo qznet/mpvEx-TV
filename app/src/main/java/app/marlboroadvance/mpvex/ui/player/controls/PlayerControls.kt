@@ -113,6 +113,7 @@ import app.marlboroadvance.mpvex.ui.player.controls.components.ControlsButton
 import app.marlboroadvance.mpvex.ui.player.controls.components.MultipleSpeedPlayerUpdate
 import app.marlboroadvance.mpvex.ui.player.controls.components.SeekPlayerUpdate
 import app.marlboroadvance.mpvex.ui.player.controls.components.SeekbarWithTimers
+import app.marlboroadvance.mpvex.ui.player.controls.components.SeekTimeOverlay
 import app.marlboroadvance.mpvex.ui.player.controls.components.SlideToUnlock
 import app.marlboroadvance.mpvex.ui.player.controls.components.SpeedControlSlider
 import app.marlboroadvance.mpvex.ui.player.controls.components.TextPlayerUpdate
@@ -1340,5 +1341,10 @@ fun PlayerControls(
       panelShown = panel,
       onDismissRequest = { onOpenPanel(Panels.None) },
     )
+
+    // Middle-of-screen "position / duration" badge for the remote's seek keys. Emitted last so it
+    // stays above the controls layer.
+    val seekTimeOverlayText by viewModel.seekTimeOverlayText.collectAsState()
+    SeekTimeOverlay(text = seekTimeOverlayText)
   }
 }
