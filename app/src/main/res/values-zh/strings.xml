@@ -432,6 +432,8 @@
   <string name="swap_the_volume_and_brightness_slider">交换音量和亮度滑块</string>
   <string name="pref_player_display_reduce_player_animation">减少播放器动画</string>
   <string name="pref_player_display_hide_player_control_time">隐藏播放器控制时间</string>
+  <string name="pref_player_display_fps_60_title">锁定显示刷新率为 60Hz</string>
+  <string name="pref_player_display_fps_60_summary">设置 mpv 的 display-fps=60。对只暴露固定 60Hz 模式（如雷鸟/FFALCON R635C）的面板，可让 25/30fps 内容保持音画同步。默认开启。</string>
   <string name="show_splash_ovals_on_double_tap_to_seek">双击寻道时显示涟漪效果</string>
   <string name="show_time_on_double_tap_to_seek">显示寻道时间</string>
   <string name="player_sheets_frame_navigation_title">逐帧导航</string>

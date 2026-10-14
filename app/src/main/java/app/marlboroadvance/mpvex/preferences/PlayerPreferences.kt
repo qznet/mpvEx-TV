@@ -243,6 +243,15 @@ class PlayerPreferences(
     deserializer = { it.toDoubleOrNull() ?: -1.0 }
   )
 
+  // ==================== Display refresh-rate hint ====================
+  //
+  // Tells mpv the physical panel runs at a fixed 60Hz. The TCL/FFALCON R635C (and many Android
+  // TV panels) only expose a single 1920x1080@60Hz mode — verified via `dumpsys display`, and
+  // there is no 50Hz toggle in settings. On such panels 25fps content judders badly if mpv guesses
+  // the refresh wrong, so an explicit display-fps keeps A/V sync correct. Enabled by default; turn
+  // off to let mpv auto-detect (useful on a device that reports a different native rate).
+  val useDisplayFps60 = preferenceStore.getBoolean("use_display_fps_60", true)
+
   // ==================== Playback status line (one-line on-screen diagnostics) ====================
   //
   // mpv's own OSD cannot be used for this: the HW+ path runs vo=mediacodec_embed, which renders

@@ -153,6 +153,14 @@ class MPVView(
     // to 0 and playback stops with no error. 120s is generous for SMB proxied over localhost.
     MPVLib.setOptionString("network-timeout", "120")
 
+    // Tell mpv the panel runs at a fixed 60Hz. The TCL/FFALCON R635C only exposes a 60Hz mode
+    // (no 50Hz, no settings toggle), and 25fps content on 60Hz judders if mpv mis-guesses the
+    // refresh. An explicit display-fps keeps A/V sync correct. Gated by a preference so it can be
+    // disabled on devices that report a different native rate.
+    if (playerPreferences.useDisplayFps60.get()) {
+      MPVLib.setOptionString("display-fps", "60")
+    }
+
     if (decoderPreferences.useYUV420P.get()) {
       MPVLib.setOptionString("vf", "format=yuv420p")
     }

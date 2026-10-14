@@ -767,6 +767,21 @@ object PlayerPreferencesScreen : Screen {
                 onValueChange = preferences.reduceMotion::set,
                 title = { Text(stringResource(R.string.pref_player_display_reduce_player_animation)) },
               )
+
+              PreferenceDivider()
+
+              val useDisplayFps60 by preferences.useDisplayFps60.collectAsState()
+              SwitchPreference(
+                value = useDisplayFps60,
+                onValueChange = preferences.useDisplayFps60::set,
+                title = { Text(stringResource(R.string.pref_player_display_fps_60_title)) },
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_display_fps_60_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
             }
           }
         }
