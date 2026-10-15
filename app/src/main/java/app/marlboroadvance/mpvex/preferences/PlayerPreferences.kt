@@ -243,15 +243,6 @@ class PlayerPreferences(
     deserializer = { it.toDoubleOrNull() ?: -1.0 }
   )
 
-  // ==================== Display refresh-rate hint ====================
-  //
-  // override-display-fps (non-deprecated alias of the old display-fps, deprecated since mpv 0.31).
-  // It is only consumed by --video-sync=display-* modes; under the default audio sync it has NO
-  // effect, so it does NOT by itself fix 25fps@60Hz judder — that comes from the TV's motion
-  // compensation (MEMC). Kept as a toggle so a user who switches to display-resample/vdrop gets the
-  // correct 60Hz value instead of mpv mis-detecting. Default ON (harmless under audio sync).
-  val useDisplayFps60 = preferenceStore.getBoolean("use_display_fps_60", true)
-
   // ==================== Playback status line (one-line on-screen diagnostics) ====================
   //
   // mpv's own OSD cannot be used for this: the HW+ path runs vo=mediacodec_embed, which renders
