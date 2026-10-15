@@ -153,12 +153,14 @@ class MPVView(
     // to 0 and playback stops with no error. 120s is generous for SMB proxied over localhost.
     MPVLib.setOptionString("network-timeout", "120")
 
-    // Tell mpv the panel runs at a fixed 60Hz. The TCL/FFALCON R635C only exposes a 60Hz mode
-    // (no 50Hz, no settings toggle), and 25fps content on 60Hz judders if mpv mis-guesses the
-    // refresh. An explicit display-fps keeps A/V sync correct. Gated by a preference so it can be
-    // disabled on devices that report a different native rate.
+    // Pass override-display-fps=60 (the non-deprecated successor to display-fps, deprecated since
+    // mpv 0.31). IMPORTANT: override-display-fps only feeds the --video-sync=display-* modes
+    // (display-resample / -vdrop / -adrop). Under our default audio sync it is INERT — it does not
+    // by itself fix 25fps@60Hz judder; that comes from the TV's motion compensation (MEMC). It is
+    // still set so a user who opts into a display-* mode gets the correct 60Hz instead of mpv
+    // mis-detecting. Gated by a preference for devices that report a different native rate.
     if (playerPreferences.useDisplayFps60.get()) {
-      MPVLib.setOptionString("display-fps", "60")
+      MPVLib.setOptionString("override-display-fps", "60")
     }
 
     if (decoderPreferences.useYUV420P.get()) {
