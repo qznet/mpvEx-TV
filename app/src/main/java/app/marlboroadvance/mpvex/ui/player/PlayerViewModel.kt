@@ -444,6 +444,50 @@ class PlayerViewModel(
     }
   }
 
+  /**
+   * Tracks the last `audio-spdif` value pushed to mpv so [applyEffectivePassthrough] can skip
+   * redundant writes (each change re-initialises the audio output, which is audible as a click).
+   */
+  private var lastPassthroughSpdif: String? = null
+
+  /**
+   * Applies the effective audio passthrough state to mpv right now, from the user's master
+   * switch + strategy + the *current* playback speed. Safe to call repeatedly: it only writes
+   * mpv's `audio-spdif` when the computed value actually changed. When the passthrough/PCM
+   * *state* flips it also fires a brief OSD ("Audio passthrough" / "PCM downmix").
+   *
+   * Runtime-changeable: mpv rebuilds only the audio output chain (AO), the video keeps playing,
+   * so this never needs a file reload and does not touch `vo=mediacodec_embed`.
+   */
+  fun applyEffectivePassthrough() {
+    viewModelScope.launch(Dispatchers.IO) {
+      val speed = MPVLib.getPropertyDouble("speed") ?: 1.0
+      val spdif = audioPreferences.effectivePassthroughSpdif(speed)
+      if (spdif == lastPassthroughSpdif) return@launch
+      lastPassthroughSpdif = spdif
+      runCatching { MPVLib.setPropertyString("audio-spdif", spdif) }
+        .onFailure { Log.e(TAG, "Failed to set audio-spdif to '$spdif'", it) }
+      playerUpdate.update { PlayerUpdates.AudioPassthrough(spdif.isNotBlank()) }
+    }
+  }
+
+  init {
+    // Audio passthrough: when the playback speed crosses 1.0x in Speed-priority mode, mpv must
+    // drop from bitstream passthrough back to PCM so its own time-stretch can actually change the
+    // tempo (a compressed bitstream cannot be time-stretched). Re-apply on every speed change; the
+    // method itself only acts when the effective state flips.
+    viewModelScope.launch {
+      var prevSpeed: Double? = null
+      MPVLib.propFloat["speed"].collect { speed ->
+        val s = speed?.toDouble() ?: 1.0
+        if (prevSpeed != null && kotlin.math.abs(prevSpeed!! - s) > 0.001) {
+          applyEffectivePassthrough()
+        }
+        prevSpeed = s
+      }
+    }
+  }
+
   // Cached values
   private val doubleTapToSeekDuration by lazy { gesturePreferences.doubleTapToSeekDuration.get() }
   private val inputMethodManager by lazy {

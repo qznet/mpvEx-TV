@@ -336,6 +336,16 @@ class MPVView(
     if (audioPreferences.volumeNormalization.get()) {
       MPVLib.setOptionString("af", "dynaudnorm")
     }
+
+    // Audio passthrough. This is the initial state for the file: compute the effective
+    // `audio-spdif` from the user's master switch + strategy + the default (start) speed.
+    // Runtime changes are handled by PlayerViewModel.applyEffectivePassthrough() (e.g. when the
+    // user crosses 1.0x speed in Speed-priority mode, or toggles the switch mid-playback).
+    // Blank string = decode to PCM (TV speakers); non-blank = bitstream passthrough to AVR.
+    MPVLib.setOptionString(
+      "audio-spdif",
+      audioPreferences.effectivePassthroughSpdif(playerPreferences.defaultSpeed.get().toDouble()),
+    )
   }
 
   // Setup

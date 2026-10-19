@@ -159,6 +159,15 @@ sealed class PlayerUpdates {
     val currentFrame: Int,
     val totalFrames: Int,
   ) : PlayerUpdates()
+
+  /**
+   * Transient on-screen hint shown when the audio output path switches between HDMI bitstream
+   * passthrough and PCM decoding. [isPassthrough] true -> "Audio passthrough", false -> "PCM downmix".
+   * Driven by PlayerViewModel.applyEffectivePassthrough().
+   */
+  data class AudioPassthrough(
+    val isPassthrough: Boolean,
+  ) : PlayerUpdates()
 }
 
 /**

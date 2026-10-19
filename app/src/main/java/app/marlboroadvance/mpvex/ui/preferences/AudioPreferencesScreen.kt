@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import app.marlboroadvance.mpvex.R
 import app.marlboroadvance.mpvex.preferences.AudioChannels
 import app.marlboroadvance.mpvex.preferences.AudioPreferences
+import app.marlboroadvance.mpvex.preferences.PassthroughMode
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.ui.utils.LocalBackStack
@@ -184,6 +185,42 @@ object AudioPreferencesScreen : Screen {
             onSliderValueChange = { preferences.volumeBoostCap.set(it.toInt()) },
             sliderValue = volumeBoostCap.toFloat(),
           )
+
+          PreferenceDivider()
+          val passthroughEnabled by preferences.passthroughEnabled.collectAsState()
+          SwitchPreference(
+            value = passthroughEnabled,
+            onValueChange = { preferences.passthroughEnabled.set(it) },
+            title = { Text(stringResource(R.string.pref_audio_passthrough_enabled)) },
+            summary = {
+              Text(
+                stringResource(R.string.pref_audio_passthrough_enabled_summary),
+                color = MaterialTheme.colorScheme.outline,
+              )
+            },
+          )
+
+          if (passthroughEnabled) {
+            PreferenceDivider()
+            val passthroughMode by preferences.passthroughMode.collectAsState()
+            ListPreference(
+              value = passthroughMode,
+              onValueChange = { preferences.passthroughMode.set(it) },
+              values = PassthroughMode.entries,
+              valueToText = { AnnotatedString(context.getString(it.title)) },
+              title = { Text(stringResource(R.string.pref_audio_passthrough_mode)) },
+              summary = {
+                val summaryRes = when (passthroughMode) {
+                  PassthroughMode.Quality -> R.string.pref_audio_passthrough_mode_summary_quality
+                  PassthroughMode.Speed -> R.string.pref_audio_passthrough_mode_summary_speed
+                }
+                Text(
+                  stringResource(summaryRes),
+                  color = MaterialTheme.colorScheme.outline,
+                )
+              },
+            )
+          }
             }
           }
         }

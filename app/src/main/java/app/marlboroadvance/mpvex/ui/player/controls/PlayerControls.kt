@@ -614,6 +614,16 @@ fun PlayerControls(
               TextPlayerUpdate(text)
             }
 
+            is PlayerUpdates.AudioPassthrough -> {
+              TextPlayerUpdate(
+                if ((currentPlayerUpdate as PlayerUpdates.AudioPassthrough).isPassthrough) {
+                  stringResource(R.string.player_update_passthrough_on)
+                } else {
+                  stringResource(R.string.player_update_passthrough_off)
+                },
+              )
+            }
+
             else -> {}
           }
         }

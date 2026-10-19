@@ -278,6 +278,15 @@
   <string name="pref_audio_channels_stereo_reversed">Reversed Stereo</string>
   <string name="pref_audio_preferred_language">Audio language(s) to be selected by default on a video with multiple audio streams, Two- or three-letter languages codes work. Multiple values can be delimited by comma.</string>
   <string name="pref_audio_volume_boost_cap">Volume boost cap</string>
+  <string name="pref_audio_passthrough_enabled">Audio passthrough</string>
+  <string name="pref_audio_passthrough_enabled_summary">Off: audio is decoded to PCM and played through the TV speakers. On: compressed bitstreams are sent over HDMI to an AVR/receiver.</string>
+  <string name="pref_audio_passthrough_mode">Passthrough strategy</string>
+  <string name="pref_audio_passthrough_mode_summary_quality">Keep bitstream passthrough at all times; playback speed changes are not applied to the audio.</string>
+  <string name="pref_audio_passthrough_mode_summary_speed">When speed ≠ 1.0x, drop back to PCM so mpv can actually time-stretch the audio (sacrifices passthrough).</string>
+  <string name="pref_audio_passthrough_mode_quality">Quality priority</string>
+  <string name="pref_audio_passthrough_mode_speed">Speed priority</string>
+  <string name="player_update_passthrough_on">Audio passthrough</string>
+  <string name="player_update_passthrough_off">PCM downmix</string>
   <string name="pref_advanced">Advanced</string>
   <string name="pref_advanced_summary">Configuration location, mpv.conf</string>
   <string name="pref_advanced_mpv_conf_storage_location">Pick configuration storage location</string>

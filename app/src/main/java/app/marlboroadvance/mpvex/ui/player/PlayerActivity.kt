@@ -2198,6 +2198,9 @@ class PlayerActivity :
     super.onResume()
     updateVolume()
     startStallWatchdog()
+    // Re-apply audio passthrough: if the user toggled the switch or strategy in Settings while a
+    // video is loaded, sync the live audio output. Shows the OSD only if the state actually flips.
+    viewModel.applyEffectivePassthrough()
   }
 
   /**

@@ -287,6 +287,15 @@
   <string name="pref_audio_channels_stereo_reversed">反向立体声</string>
   <string name="pref_audio_preferred_language">在具有多个音频流的视频上默认选择的音频语言。可以使用两字母或三字母语言代码，多个值可以用逗号分隔。</string>
   <string name="pref_audio_volume_boost_cap">音量增强上限</string>
+  <string name="pref_audio_passthrough_enabled">音频透传</string>
+  <string name="pref_audio_passthrough_enabled_summary">关闭：音频解码为 PCM 经电视喇叭播放。开启：压缩位流经 HDMI 透传给功放/回音壁。</string>
+  <string name="pref_audio_passthrough_mode">透传策略</string>
+  <string name="pref_audio_passthrough_mode_summary_quality">始终透传压缩位流；倍速变化不会作用于音频。</string>
+  <string name="pref_audio_passthrough_mode_summary_speed">倍速不为 1.0x 时自动切回 PCM，让 mpv 真正改变音调速度（牺牲透传）。</string>
+  <string name="pref_audio_passthrough_mode_quality">音质优先</string>
+  <string name="pref_audio_passthrough_mode_speed">变速优先</string>
+  <string name="player_update_passthrough_on">音频透传</string>
+  <string name="player_update_passthrough_off">PCM 降级</string>
 
   <string name="pref_advanced">高级</string>
   <string name="pref_advanced_summary">配置位置、mpv.conf</string>
