@@ -472,12 +472,21 @@ class PlayerViewModel(
    *   so we surface "passthrough (speed inactive)". In Speed-priority the bitstream is dropped
    *   to PCM so mpv can time-stretch, so we surface "PCM downmix (speed active)".
    */
-  fun applyEffectivePassthrough() {
+  fun applyEffectivePassthrough(speed: Double? = null) {
     viewModelScope.launch(Dispatchers.IO) {
-      val speed = MPVLib.getPropertyDouble("speed") ?: 1.0
-      val spdif = audioPreferences.effectivePassthroughSpdif(speed)
+      // Prefer the speed value passed by the caller (authoritative: it comes straight from the
+      // speed-change event). Fall back to the live `propFloat["speed"]` StateFlow — the same source
+      // the on-screen playback-speed readout uses and therefore the one we trust — and only as a last
+      // resort to getPropertyDouble. getPropertyDouble("speed") has been observed returning a
+      // stale/zero value in this build, which would wrongly force PCM in Speed-priority mode (it made
+      // every non-1.0x check pass, so the bitstream was always dropped).
+      val effectiveSpeed = speed
+        ?: MPVLib.propFloat["speed"].value?.toDouble()
+        ?: MPVLib.getPropertyDouble("speed")
+        ?: 1.0
+      val spdif = audioPreferences.effectivePassthroughSpdif(effectiveSpeed)
       val isPassthrough = spdif.isNotBlank()
-      val speedActive = kotlin.math.abs(speed - 1.0) > 0.001
+      val speedActive = kotlin.math.abs(effectiveSpeed - 1.0) > 0.001
 
       // Only touch mpv's audio-spdif when the value really changed (avoids AO rebuild clicks).
       if (spdif != lastPassthroughSpdif) {
@@ -505,7 +514,7 @@ class PlayerViewModel(
       MPVLib.propFloat["speed"].collect { speed ->
         val s = speed?.toDouble() ?: 1.0
         if (prevSpeed != null && kotlin.math.abs(prevSpeed!! - s) > 0.001) {
-          applyEffectivePassthrough()
+          applyEffectivePassthrough(s)
         }
         prevSpeed = s
       }
