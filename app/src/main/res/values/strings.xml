@@ -286,7 +286,9 @@
   <string name="pref_audio_passthrough_mode_quality">Quality priority</string>
   <string name="pref_audio_passthrough_mode_speed">Speed priority</string>
   <string name="player_update_passthrough_on">Audio passthrough</string>
-  <string name="player_update_passthrough_off">PCM downmix</string>
+  <string name="player_update_passthrough_off">PCM downmix (speed active)</string>
+  <string name="player_update_passthrough_on_speed_inactive">Audio passthrough (speed inactive)</string>
+  <string name="player_update_passthrough_pcm_output">PCM output</string>
   <string name="pref_advanced">Advanced</string>
   <string name="pref_advanced_summary">Configuration location, mpv.conf</string>
   <string name="pref_advanced_mpv_conf_storage_location">Pick configuration storage location</string>

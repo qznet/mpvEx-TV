@@ -295,7 +295,9 @@
   <string name="pref_audio_passthrough_mode_quality">音质优先</string>
   <string name="pref_audio_passthrough_mode_speed">变速优先</string>
   <string name="player_update_passthrough_on">音频透传</string>
-  <string name="player_update_passthrough_off">PCM 降级</string>
+  <string name="player_update_passthrough_off">PCM 降级（倍速生效）</string>
+  <string name="player_update_passthrough_on_speed_inactive">音频透传（倍速不生效）</string>
+  <string name="player_update_passthrough_pcm_output">PCM 输出</string>
 
   <string name="pref_advanced">高级</string>
   <string name="pref_advanced_summary">配置位置、mpv.conf</string>

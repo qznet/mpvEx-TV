@@ -445,29 +445,53 @@ class PlayerViewModel(
   }
 
   /**
-   * Tracks the last `audio-spdif` value pushed to mpv so [applyEffectivePassthrough] can skip
-   * redundant writes (each change re-initialises the audio output, which is audible as a click).
+   * Tracks the last `audio-spdif` value pushed to mpv so we only rewrite it (and rebuild the
+   * audio output) when it actually changed — each rewrite is audible as a click.
    */
   private var lastPassthroughSpdif: String? = null
 
   /**
+   * Tracks the last OSD state so the brief passthrough/speed notice only fires when the
+   * *meaningful* state changes: (bitstream active?, speed ≠ 1.0x?). This differs from
+   * [lastPassthroughSpdif] because in Quality-priority mode the bitstream stays on across a
+   * speed change, yet the speed control silently stops working (a bitstream cannot be
+   * time-stretched) — we still want to tell the user in that case.
+   */
+  private var lastPassthroughOsdState: String? = null
+
+  /**
    * Applies the effective audio passthrough state to mpv right now, from the user's master
-   * switch + strategy + the *current* playback speed. Safe to call repeatedly: it only writes
-   * mpv's `audio-spdif` when the computed value actually changed. When the passthrough/PCM
-   * *state* flips it also fires a brief OSD ("Audio passthrough" / "PCM downmix").
+   * switch + strategy + the *current* playback speed.
    *
-   * Runtime-changeable: mpv rebuilds only the audio output chain (AO), the video keeps playing,
-   * so this never needs a file reload and does not touch `vo=mediacodec_embed`.
+   * - mpv's `audio-spdif` is only rewritten when the value really changed (avoids AO rebuild
+   *   clicks). It is runtime-changeable: mpv rebuilds only the audio output chain (AO), the
+   *   video keeps playing, so this never needs a file reload and does not touch
+   *   `vo=mediacodec_embed`.
+   * - The OSD fires whenever the *meaningful* state changes, even if `audio-spdif` did not:
+   *   Quality-priority keeps the bitstream on when speed ≠ 1.0x, but speed then has no effect,
+   *   so we surface "passthrough (speed inactive)". In Speed-priority the bitstream is dropped
+   *   to PCM so mpv can time-stretch, so we surface "PCM downmix (speed active)".
    */
   fun applyEffectivePassthrough() {
     viewModelScope.launch(Dispatchers.IO) {
       val speed = MPVLib.getPropertyDouble("speed") ?: 1.0
       val spdif = audioPreferences.effectivePassthroughSpdif(speed)
-      if (spdif == lastPassthroughSpdif) return@launch
-      lastPassthroughSpdif = spdif
-      runCatching { MPVLib.setPropertyString("audio-spdif", spdif) }
-        .onFailure { Log.e(TAG, "Failed to set audio-spdif to '$spdif'", it) }
-      playerUpdate.update { PlayerUpdates.AudioPassthrough(spdif.isNotBlank()) }
+      val isPassthrough = spdif.isNotBlank()
+      val speedActive = kotlin.math.abs(speed - 1.0) > 0.001
+
+      // Only touch mpv's audio-spdif when the value really changed (avoids AO rebuild clicks).
+      if (spdif != lastPassthroughSpdif) {
+        lastPassthroughSpdif = spdif
+        runCatching { MPVLib.setPropertyString("audio-spdif", spdif) }
+          .onFailure { Log.e(TAG, "Failed to set audio-spdif to '$spdif'", it) }
+      }
+
+      // Fire the OSD whenever the meaningful state changes, even if audio-spdif did not.
+      val osdState = "$isPassthrough|$speedActive"
+      if (osdState != lastPassthroughOsdState) {
+        lastPassthroughOsdState = osdState
+        playerUpdate.update { PlayerUpdates.AudioPassthrough(isPassthrough, speedActive) }
+      }
     }
   }
 

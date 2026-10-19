@@ -162,11 +162,20 @@ sealed class PlayerUpdates {
 
   /**
    * Transient on-screen hint shown when the audio output path switches between HDMI bitstream
-   * passthrough and PCM decoding. [isPassthrough] true -> "Audio passthrough", false -> "PCM downmix".
-   * Driven by PlayerViewModel.applyEffectivePassthrough().
+   * passthrough and PCM decoding, or when the *meaning* of the current state changes.
+   *
+   * - [isPassthrough] true  -> compressed bitstream is sent to the receiver (HDMI).
+   * - [isPassthrough] false -> audio is decoded to PCM (TV speakers, or downgraded from passthrough).
+   * - [speedActive] true    -> playback speed is actually ≠ 1.0x.
+   *
+   * A bitstream cannot be time-stretched, so when [isPassthrough] is true the speed control has
+   * NO effect (audio + video are locked to 1.0x by mpv). The hint surfaces this so the user knows
+   * whether changing speed will actually do anything. Driven by
+   * PlayerViewModel.applyEffectivePassthrough().
    */
   data class AudioPassthrough(
     val isPassthrough: Boolean,
+    val speedActive: Boolean,
   ) : PlayerUpdates()
 }
 

@@ -615,13 +615,18 @@ fun PlayerControls(
             }
 
             is PlayerUpdates.AudioPassthrough -> {
-              TextPlayerUpdate(
-                if ((currentPlayerUpdate as PlayerUpdates.AudioPassthrough).isPassthrough) {
-                  stringResource(R.string.player_update_passthrough_on)
-                } else {
-                  stringResource(R.string.player_update_passthrough_off)
-                },
-              )
+              val upd = currentPlayerUpdate as PlayerUpdates.AudioPassthrough
+              val textRes = when {
+                upd.isPassthrough && !upd.speedActive ->
+                  R.string.player_update_passthrough_on
+                upd.isPassthrough && upd.speedActive ->
+                  R.string.player_update_passthrough_on_speed_inactive
+                !upd.isPassthrough && upd.speedActive ->
+                  R.string.player_update_passthrough_off
+                else ->
+                  R.string.player_update_passthrough_pcm_output
+              }
+              TextPlayerUpdate(stringResource(textRes))
             }
 
             else -> {}
