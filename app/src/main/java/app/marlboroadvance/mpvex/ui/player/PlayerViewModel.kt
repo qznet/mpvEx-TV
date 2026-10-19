@@ -474,33 +474,43 @@ class PlayerViewModel(
    */
   fun applyEffectivePassthrough(speed: Double? = null) {
     viewModelScope.launch(Dispatchers.IO) {
-      // Prefer the speed value passed by the caller (authoritative: it comes straight from the
-      // speed-change event). Fall back to the live `propFloat["speed"]` StateFlow — the same source
-      // the on-screen playback-speed readout uses and therefore the one we trust — and only as a last
-      // resort to getPropertyDouble. getPropertyDouble("speed") has been observed returning a
-      // stale/zero value in this build, which would wrongly force PCM in Speed-priority mode (it made
-      // every non-1.0x check pass, so the bitstream was always dropped).
-      val effectiveSpeed = speed
-        ?: MPVLib.propFloat["speed"].value?.toDouble()
-        ?: MPVLib.getPropertyDouble("speed")
-        ?: 1.0
-      val spdif = audioPreferences.effectivePassthroughSpdif(effectiveSpeed)
-      val isPassthrough = spdif.isNotBlank()
-      val speedActive = kotlin.math.abs(effectiveSpeed - 1.0) > 0.001
+      runCatching {
+        // Do not touch the audio output before a file is loaded. mpv's AO and VO share the
+        // core event loop, and rewriting audio-spdif during the mediacodec_embed VO-open window
+        // (when it attaches its OSD ANativeWindow) can destabilise startup on some firmware,
+        // leaving the video track deselected (black screen) — see BaseMPVView.recoverVideoOutputIfNeeded().
+        // setupAudioOptions() already sets the correct audio-spdif for the first playback, so skipping
+        // here only postpones the live re-apply until playback is actually active.
+        if (MPVLib.getPropertyString("path").isNullOrEmpty()) return@runCatching
 
-      // Only touch mpv's audio-spdif when the value really changed (avoids AO rebuild clicks).
-      if (spdif != lastPassthroughSpdif) {
-        lastPassthroughSpdif = spdif
-        runCatching { MPVLib.setPropertyString("audio-spdif", spdif) }
-          .onFailure { Log.e(TAG, "Failed to set audio-spdif to '$spdif'", it) }
-      }
+        // Prefer the speed value passed by the caller (authoritative: it comes straight from the
+        // speed-change event). Fall back to the live `propFloat["speed"]` StateFlow — the same source
+        // the on-screen playback-speed readout uses and therefore the one we trust — and only as a last
+        // resort to getPropertyDouble. getPropertyDouble("speed") has been observed returning a
+        // stale/zero value in this build, which would wrongly force PCM in Speed-priority mode (it made
+        // every non-1.0x check pass, so the bitstream was always dropped).
+        val effectiveSpeed = speed
+          ?: MPVLib.propFloat["speed"].value?.toDouble()
+          ?: MPVLib.getPropertyDouble("speed")
+          ?: 1.0
+        val spdif = audioPreferences.effectivePassthroughSpdif(effectiveSpeed)
+        val isPassthrough = spdif.isNotBlank()
+        val speedActive = kotlin.math.abs(effectiveSpeed - 1.0) > 0.001
 
-      // Fire the OSD whenever the meaningful state changes, even if audio-spdif did not.
-      val osdState = "$isPassthrough|$speedActive"
-      if (osdState != lastPassthroughOsdState) {
-        lastPassthroughOsdState = osdState
-        playerUpdate.update { PlayerUpdates.AudioPassthrough(isPassthrough, speedActive) }
-      }
+        // Only touch mpv's audio-spdif when the value really changed (avoids AO rebuild clicks).
+        if (spdif != lastPassthroughSpdif) {
+          lastPassthroughSpdif = spdif
+          runCatching { MPVLib.setPropertyString("audio-spdif", spdif) }
+            .onFailure { Log.e(TAG, "Failed to set audio-spdif to '$spdif'", it) }
+        }
+
+        // Fire the OSD whenever the meaningful state changes, even if audio-spdif did not.
+        val osdState = "$isPassthrough|$speedActive"
+        if (osdState != lastPassthroughOsdState) {
+          lastPassthroughOsdState = osdState
+          playerUpdate.update { PlayerUpdates.AudioPassthrough(isPassthrough, speedActive) }
+        }
+      }.onFailure { Log.e(TAG, "applyEffectivePassthrough failed", it) }
     }
   }
 
