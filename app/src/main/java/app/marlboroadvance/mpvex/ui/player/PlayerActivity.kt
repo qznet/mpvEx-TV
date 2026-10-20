@@ -3112,6 +3112,11 @@ class PlayerActivity :
       delay(900)
       runCatching { player.recoverVideoOutputIfNeeded() }
     }
+    // Apply the user's audio passthrough (master switch + strategy + current speed) now that the
+    // file is loaded and the mediacodec_embed VO is up. Setting it at mpv-init time raced the
+    // VO-open window and caused black screens with hwdec falling back to auto; applying here
+    // (after the video output is stable) rebuilds the AO safely.
+    viewModel.applyEffectivePassthrough()
 
     // Reset per-file auto skip state. The intro decision is made live in the
     // PLAYBACK_RESTART handler (time-based, decoupled from resume), so we only need

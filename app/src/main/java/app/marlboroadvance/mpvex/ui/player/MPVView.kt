@@ -199,6 +199,10 @@ class MPVView(
 
     val logLevel = if (advancedPreferences.verboseLogging.get()) "v" else "warn"
     MPVLib.setOptionString("msg-level", "all=$logLevel")
+    // TEMP DIAG: dump full mpv log to /sdcard/mpv/mpv.log to confirm the passthrough/VO
+    // black-screen root cause. Remove this block after diagnosis.
+    MPVLib.setOptionString("log-file", "/sdcard/mpv/mpv.log")
+    MPVLib.setOptionString("msg-level", "all=info")
 
     MPVLib.setPropertyBoolean("keep-open", true)
     MPVLib.setPropertyBoolean("input-default-bindings", true)
@@ -337,15 +341,14 @@ class MPVView(
       MPVLib.setOptionString("af", "dynaudnorm")
     }
 
-    // Audio passthrough. This is the initial state for the file: compute the effective
-    // `audio-spdif` from the user's master switch + strategy + the default (start) speed.
-    // Runtime changes are handled by PlayerViewModel.applyEffectivePassthrough() (e.g. when the
-    // user crosses 1.0x speed in Speed-priority mode, or toggles the switch mid-playback).
-    // Blank string = decode to PCM (TV speakers); non-blank = bitstream passthrough to AVR.
-    MPVLib.setOptionString(
-      "audio-spdif",
-      audioPreferences.effectivePassthroughSpdif(playerPreferences.defaultSpeed.get().toDouble()),
-    )
+    // Audio passthrough is intentionally NOT set during mpv init. Setting `audio-spdif` to a
+    // bitstream list here makes the AO initialise passthrough in the same window where
+    // `surfaceCreated()` opens the mediacodec_embed VO. On some firmware that races the OSD-
+    // surface attach and the VO open fails -> black screen with hwdec falling back to auto.
+    // The effective passthrough is instead applied by PlayerViewModel.applyEffectivePassthrough()
+    // from PlayerActivity.handleFileLoaded() (and on speed/switch changes), i.e. AFTER the video
+    // output is already up, where rebuilding the AO is safe. mpv defaults audio-spdif to "" (PCM),
+    // which is exactly the state we want for the init/VO-open window.
   }
 
   // Setup
