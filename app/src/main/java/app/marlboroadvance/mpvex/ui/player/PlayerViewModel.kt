@@ -449,6 +449,12 @@ class PlayerViewModel(
    * audio output) when it actually changed — each rewrite is audible as a click.
    */
   private var lastPassthroughSpdif: String? = null
+  /**
+   * Whether [lastPassthroughSpdif] has been seeded from the value the AO already opened with
+   * (set at mpv init via [MPVView.setupAudioOptions]). The first [applyEffectivePassthrough]
+   * call only records that value instead of rebuilding the AO, because the AO is already correct.
+   */
+  private var passthroughInitialized = false
 
   /**
    * Tracks the last OSD state so the brief passthrough/speed notice only fires when the
@@ -463,10 +469,12 @@ class PlayerViewModel(
    * Applies the effective audio passthrough state to mpv right now, from the user's master
    * switch + strategy + the *current* playback speed.
    *
-   * - mpv's `audio-spdif` is only rewritten when the value really changed (avoids AO rebuild
-   *   clicks). It is runtime-changeable: mpv rebuilds only the audio output chain (AO), the
-   *   video keeps playing, so this never needs a file reload and does not touch
-   *   `vo=mediacodec_embed`.
+   * - The first call (at file-loaded) just records the value the AO already opened with at mpv
+   *   init — no rebuild. Subsequent calls only rewrite `audio-spdif` (and force an AO reopen)
+   *   when the value really changed, which happens on a speed crossing of 1.0x (Speed-priority)
+   *   or a master-switch / strategy toggle. mpv does NOT reopen the AO on its own for a runtime
+   *   `audio-spdif` change, so we force the reopen via [reopenAudioOutput]. This never touches
+   *   `vo=mediacodec_embed` (video keeps playing).
    * - The OSD fires whenever the *meaningful* state changes, even if `audio-spdif` did not:
    *   Quality-priority keeps the bitstream on when speed ≠ 1.0x, but speed then has no effect,
    *   so we surface "passthrough (speed inactive)". In Speed-priority the bitstream is dropped
@@ -476,11 +484,9 @@ class PlayerViewModel(
     viewModelScope.launch(Dispatchers.IO) {
       runCatching {
         // Do not touch the audio output before a file is loaded. mpv's AO and VO share the
-        // core event loop, and rewriting audio-spdif during the mediacodec_embed VO-open window
-        // (when it attaches its OSD ANativeWindow) can destabilise startup on some firmware,
-        // leaving the video track deselected (black screen) — see BaseMPVView.recoverVideoOutputIfNeeded().
-        // setupAudioOptions() already sets the correct audio-spdif for the first playback, so skipping
-        // here only postpones the live re-apply until playback is actually active.
+        // core event loop. The AO is opened with the correct audio-spdif at mpv init
+        // (setupAudioOptions), so skipping here only postpones the live re-apply until playback
+        // is actually active.
         if (MPVLib.getPropertyString("path").isNullOrEmpty()) return@runCatching
 
         // Prefer the speed value passed by the caller (authoritative: it comes straight from the
@@ -497,11 +503,17 @@ class PlayerViewModel(
         val isPassthrough = spdif.isNotBlank()
         val speedActive = kotlin.math.abs(effectiveSpeed - 1.0) > 0.001
 
-        // Only touch mpv's audio-spdif when the value really changed (avoids AO rebuild clicks).
-        if (spdif != lastPassthroughSpdif) {
+        // The AO already opened with the init-time value: on the first call just record it.
+        // Later, when the effective value flips, rewrite audio-spdif AND force the AO to reopen
+        // (mpv will not do this for a runtime change) so bitstream<->PCM actually takes effect.
+        if (!passthroughInitialized) {
+          passthroughInitialized = true
+          lastPassthroughSpdif = spdif
+        } else if (spdif != lastPassthroughSpdif) {
           lastPassthroughSpdif = spdif
           runCatching { MPVLib.setPropertyString("audio-spdif", spdif) }
             .onFailure { Log.e(TAG, "Failed to set audio-spdif to '$spdif'", it) }
+          reopenAudioOutput()
         }
 
         // Fire the OSD whenever the meaningful state changes, even if audio-spdif did not.
@@ -512,6 +524,24 @@ class PlayerViewModel(
         }
       }.onFailure { Log.e(TAG, "applyEffectivePassthrough failed", it) }
     }
+  }
+
+  /**
+   * Forces mpv to tear down and reopen the audio output. mpv does NOT reopen the AO when
+   * `audio-spdif` changes at runtime, so a bitstream<->PCM switch would otherwise never apply.
+   * Cycling the audio track off and back on rebuilds the AO with the current `audio-spdif`,
+   * at the cost of a brief audio gap — acceptable for a mode flip.
+   */
+  private fun reopenAudioOutput() {
+    runCatching {
+      val currentAid = MPVLib.getPropertyString("aid")
+      if (currentAid != null && currentAid != "no") {
+        MPVLib.setPropertyString("aid", "no")
+        MPVLib.setPropertyString("aid", currentAid)
+      } else {
+        MPVLib.setPropertyString("aid", "auto")
+      }
+    }.onFailure { Log.e(TAG, "reopenAudioOutput failed", it) }
   }
 
   init {

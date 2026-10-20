@@ -341,14 +341,17 @@ class MPVView(
       MPVLib.setOptionString("af", "dynaudnorm")
     }
 
-    // Audio passthrough is intentionally NOT set during mpv init. Setting `audio-spdif` to a
-    // bitstream list here makes the AO initialise passthrough in the same window where
-    // `surfaceCreated()` opens the mediacodec_embed VO. On some firmware that races the OSD-
-    // surface attach and the VO open fails -> black screen with hwdec falling back to auto.
-    // The effective passthrough is instead applied by PlayerViewModel.applyEffectivePassthrough()
-    // from PlayerActivity.handleFileLoaded() (and on speed/switch changes), i.e. AFTER the video
-    // output is already up, where rebuilding the AO is safe. mpv defaults audio-spdif to "" (PCM),
-    // which is exactly the state we want for the init/VO-open window.
+    // Audio passthrough (bitstream to AVR) MUST be set during mpv init, BEFORE the AO opens.
+    // This is the only timing that makes the AO open in spdif/IEC61937 mode; a runtime change of
+    // `audio-spdif` does NOT reopen the already-open AO, so applying it later (file-loaded or on a
+    // toggle) silently kept passthrough as PCM. The earlier black-screen worry about init-time
+    // setting was actually the mediacodec_embed OSD-surface race (fixed in
+    // BaseMPVView.ensureVideoOutput), unrelated to audio. Blank = decode to PCM (TV speakers);
+    // non-blank = bitstream passthrough (audio-spdif list).
+    MPVLib.setOptionString(
+      "audio-spdif",
+      audioPreferences.effectivePassthroughSpdif(playerPreferences.defaultSpeed.get().toDouble()),
+    )
   }
 
   // Setup
