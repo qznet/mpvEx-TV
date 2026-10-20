@@ -33,6 +33,13 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     private var osdSurfaceReady = false
 
     /**
+     * Guards the verify-and-retry VO-open chain so the video-surface callback,
+     * the OSD-surface callback and [recoverVideoOutputIfNeeded] don't start
+     * overlapping retry loops (which would thrash vo=null / vo=mediacodec_embed).
+     */
+    private var voEnsureActive = false
+
+    /**
      * Re-open the video output.
      *
      * Setting `vo` to the value it already has is a no-op, so mediacodec_embed is
@@ -59,22 +66,66 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     }
 
     /**
+     * Open the video output and keep retrying until a picture is actually up.
+     *
+     * vo=mediacodec_embed needs the OSD ANativeWindow (android-osd-wid) at the moment
+     * the VO opens. [MPVLib.attachOsdSurface] queues that property *asynchronously*
+     * inside libmpv, while setPropertyString("vo", ...) applies *synchronously* and
+     * therefore races ahead of it — so the first open often fails with
+     * "No Android OSD Surface is attached for direct MediaCodec output." We re-attach
+     * the OSD surface and re-open the VO on a short back-off, verifying with
+     * video-params/w each time, until the picture comes up or we hit the retry cap.
+     */
+    private fun ensureVideoOutput(retry: Int = 0) {
+        if (retry == 0) {
+            if (voEnsureActive) return
+            voEnsureActive = true
+        }
+        if (voInUse != "mediacodec_embed") {
+            reopenVo()
+            voEnsureActive = false
+            return
+        }
+        // (Re-)attach the OSD surface so android-osd-wid reflects the live window.
+        osdSurface?.holder?.surface?.let { s ->
+            if (s.isValid) {
+                MPVLib.attachOsdSurface(s)
+                osdSurfaceReady = true
+            }
+        }
+        val delay = if (retry == 0) 0L else VO_RECOVER_DELAY_MS
+        postDelayed({
+            if (!isAttachedToWindow) {
+                voEnsureActive = false
+                return@postDelayed
+            }
+            if (voInUse != "mediacodec_embed") {
+                reopenVo()
+                voEnsureActive = false
+                return@postDelayed
+            }
+            reopenVo()
+            recoverVideoTrackIfMissing()
+            if (MPVLib.getPropertyInt("video-params/w") != null) {
+                voEnsureActive = false
+            } else if (retry < VO_RECOVER_MAX) {
+                ensureVideoOutput(retry + 1)
+            } else {
+                Log.w(TAG, "video output failed to start after ${retry + 1} attempts (vo=$voInUse)")
+                voEnsureActive = false
+            }
+        }, delay)
+    }
+
+    /**
      * Public safety net: bring the picture back if it never came up.
      *
-     * vo=mediacodec_embed needs the OSD ANativeWindow at the moment the VO is
-     * opened. When the surface is not there yet mpv aborts the open and deselects
-     * the video track, leaving audio playing over a black screen until another file
-     * is loaded. Call this a moment after a file is loaded (or after playback
-     * resumes); it is a no-op whenever video is already running.
+     * No-op once the video is already running; otherwise start the verify-and-retry
+     * open. Call this a moment after a file is loaded (or after playback resumes).
      */
     fun recoverVideoOutputIfNeeded() {
         if (MPVLib.getPropertyInt("video-params/w") != null) return
-        // Nothing can be done until the OSD surface exists; the OSD callback retries
-        // as soon as it shows up.
-        if (voInUse == "mediacodec_embed" && osdSurface != null && !osdSurfaceReady) return
-        Log.w(TAG, "video output missing, re-opening vo=$voInUse")
-        reopenVo()
-        recoverVideoTrackIfMissing()
+        ensureVideoOutput(0)
     }
 
     /**
@@ -92,12 +143,10 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 Log.w(TAG, "attaching osd surface")
-                MPVLib.attachOsdSurface(holder.surface)
-                osdSurfaceReady = true
-                // Re-open the VO so mediacodec_embed picks up the now-available OSD
-                // surface in case it was attached after the video surface / vo was set.
-                reopenVo()
-                recoverVideoTrackIfMissing()
+                // Re-run the verify-and-retry VO open now that the OSD window exists.
+                // ensureVideoOutput() re-attaches the OSD surface itself and is safe to
+                // call repeatedly (guarded by voEnsureActive).
+                ensureVideoOutput(0)
             }
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -209,22 +258,15 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     override fun surfaceCreated(holder: SurfaceHolder) {
         Log.w(TAG, "attaching surface")
         MPVLib.attachSurface(holder.surface)
-        // Attach the OSD surface early only when it is already valid. A SurfaceView
-        // returns a non-null Surface before its surface exists; attaching that made
-        // mediacodec_embed open the VO without an OSD window and fail fatally.
-        if (osdSurfaceReady) {
-            osdSurface?.holder?.surface?.let { osdSurface ->
-                Log.w(TAG, "attaching osd surface (early)")
-                MPVLib.attachOsdSurface(osdSurface)
-            }
-        }
         // This forces mpv to render subs/osd/whatever into our surface even if it would ordinarily not
         MPVLib.setOptionString("force-window", "yes")
 
-        // Ensure VO is set before loadfile (critical for mediacodec_embed).
-        // Re-opening (instead of just setting) is required because the surface below
-        // it was just replaced, and a stale/broken VO would otherwise be kept.
-        reopenVo()
+        // Ensure the VO is up before loadfile (critical for mediacodec_embed). Opening is
+        // verify-and-retry: the OSD window (android-osd-wid) is attached asynchronously by
+        // libmpv while the vo property is applied synchronously, so the first open can fail
+        // with "No Android OSD Surface is attached". ensureVideoOutput() re-attaches the OSD
+        // surface and re-opens the VO until video-params/w reports a live picture.
+        ensureVideoOutput()
 
         if (filePath != null) {
             MPVLib.command("loadfile", filePath as String)
@@ -324,5 +366,10 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
 
     companion object {
         private const val TAG = "mpv"
+        // Verify-and-retry budget for the mediacodec_embed VO open. The OSD window is
+        // attached asynchronously, so the first open(s) may fail; we re-open until a
+        // picture appears. 12 * 120ms ≈ 1.4s worst case, well within a playback start.
+        private const val VO_RECOVER_MAX = 12
+        private const val VO_RECOVER_DELAY_MS = 120L
     }
 }
