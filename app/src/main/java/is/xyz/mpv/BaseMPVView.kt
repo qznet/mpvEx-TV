@@ -87,13 +87,18 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
             return
         }
         // (Re-)attach the OSD surface so android-osd-wid reflects the live window.
+        // attachOsdSurface queues the android-osd-wid assignment *asynchronously* inside
+        // libmpv, so it does NOT take effect immediately — reopening the VO in the same
+        // tick would race ahead of it and fail with
+        // "No Android OSD Surface is attached". We therefore attach first, then wait for
+        // the wid to actually land (verified below) before the synchronous vo reopen.
         osdSurface?.holder?.surface?.let { s ->
             if (s.isValid) {
                 MPVLib.attachOsdSurface(s)
                 osdSurfaceReady = true
             }
         }
-        val delay = if (retry == 0) 0L else VO_RECOVER_DELAY_MS
+        val delay = if (retry == 0) VO_RECOVER_FIRST_DELAY_MS else VO_RECOVER_DELAY_MS
         postDelayed({
             if (!isAttachedToWindow) {
                 voEnsureActive = false
@@ -104,9 +109,24 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
                 voEnsureActive = false
                 return@postDelayed
             }
+            // Gate the VO reopen on the OSD window actually being attached. Reading the
+            // property back confirms the async attachOsdSurface has landed; if it hasn't
+            // (still blank/"0") we must NOT reopen yet or the race repeats and the first
+            // video stays black until the next file is loaded.
+            val wid = runCatching { MPVLib.getPropertyString("android-osd-wid") }.getOrNull()
+            if (wid.isNullOrBlank() || wid == "0") {
+                if (retry < VO_RECOVER_MAX) {
+                    ensureVideoOutput(retry + 1)
+                } else {
+                    Log.w(TAG, "OSD surface never attached; cannot open video output (vo=$voInUse)")
+                    voEnsureActive = false
+                }
+                return@postDelayed
+            }
             reopenVo()
             recoverVideoTrackIfMissing()
             if (MPVLib.getPropertyInt("video-params/w") != null) {
+                Log.i(TAG, "video output up after ${retry + 1} attempt(s)")
                 voEnsureActive = false
             } else if (retry < VO_RECOVER_MAX) {
                 ensureVideoOutput(retry + 1)
@@ -369,7 +389,10 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // Verify-and-retry budget for the mediacodec_embed VO open. The OSD window is
         // attached asynchronously, so the first open(s) may fail; we re-open until a
         // picture appears. 12 * 120ms ≈ 1.4s worst case, well within a playback start.
-        private const val VO_RECOVER_MAX = 12
+        private const val VO_RECOVER_MAX = 20
         private const val VO_RECOVER_DELAY_MS = 120L
+        // First attempt waits a touch longer so the async android-osd-wid (set by
+        // attachOsdSurface) has time to land before we verify-and-reopen the VO.
+        private const val VO_RECOVER_FIRST_DELAY_MS = 120L
     }
 }
