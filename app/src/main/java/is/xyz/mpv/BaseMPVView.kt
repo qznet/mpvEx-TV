@@ -298,10 +298,12 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         // is actually reported back, so the very first VO open succeeds.
         attachOsdNow()
 
-        if (filePath != null) {
-            val path = filePath
+        // `filePath` is a mutable property, so the compiler cannot smart-cast it to
+        // non-null here — use a null-safe let instead of a plain local copy.
+        val pending = filePath
+        if (pending != null) {
             filePath = null
-            loadFileAfterOsdReady(path)
+            loadFileAfterOsdReady(pending)
         } else {
             ensureVideoOutput()
         }
