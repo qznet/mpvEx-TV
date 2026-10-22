@@ -1,0 +1,231 @@
+--- a/audio/out/ao_audiotrack.c
++++ b/audio/out/ao_audiotrack.c
+@@ -191,6 +191,11 @@
+     jint ENCODING_PCM_16BIT;
+     jint ENCODING_PCM_FLOAT;
+     jint ENCODING_IEC61937;
++    jint ENCODING_AC3;
++    jint ENCODING_E_AC3;
++    jint ENCODING_DTS;
++    jint ENCODING_DTS_HD;
++    jint ENCODING_TRUEHD;
+     jint CHANNEL_OUT_MONO;
+     jint CHANNEL_OUT_STEREO;
+     jint CHANNEL_OUT_FRONT_CENTER;
+@@ -206,6 +211,11 @@
+     {"ENCODING_PCM_16BIT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_16BIT), 1},
+     {"ENCODING_PCM_FLOAT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_FLOAT), 1},
+     {"ENCODING_IEC61937", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_IEC61937), 0},
++    {"ENCODING_AC3", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_AC3), 0},
++    {"ENCODING_E_AC3", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_E_AC3), 0},
++    {"ENCODING_DTS", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_DTS), 0},
++    {"ENCODING_DTS_HD", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_DTS_HD), 0},
++    {"ENCODING_TRUEHD", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_TRUEHD), 0},
+     {"CHANNEL_OUT_MONO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_MONO), 1},
+     {"CHANNEL_OUT_STEREO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_STEREO), 1},
+     {"CHANNEL_OUT_FRONT_CENTER", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_FRONT_CENTER), 1},
+@@ -661,6 +671,20 @@
+     uninit_jni(ao);
+ }
+ 
++// Map an mpv spdif format onto the matching Android compressed AudioTrack
++// encoding. Returns 0 when the format has no direct (non-IEC61937) equivalent.
++static jint spdif_to_direct_encoding(int format)
++{
++    switch (format) {
++    case AF_FORMAT_S_AC3:    return AudioFormat.ENCODING_AC3;
++    case AF_FORMAT_S_EAC3:   return AudioFormat.ENCODING_E_AC3;
++    case AF_FORMAT_S_DTS:    return AudioFormat.ENCODING_DTS;
++    case AF_FORMAT_S_DTSHD:  return AudioFormat.ENCODING_DTS_HD;
++    case AF_FORMAT_S_TRUEHD: return AudioFormat.ENCODING_TRUEHD;
++    default:                 return 0;
++    }
++}
++
+ static int init(struct ao *ao)
+ {
+     struct priv *p = ao->priv;
+@@ -675,11 +699,25 @@
+         return -1;
+ 
+     if (af_fmt_is_spdif(ao->format)) {
+-        p->format = AudioFormat.ENCODING_IEC61937;
+-        if (!p->format || !AudioTrack.writeShortV23) {
+-            MP_ERR(ao, "spdif passthrough not supported by API\n");
++        // Direct (non-IEC61937) bitstream passthrough.
++        //
++        // The classic mpv spdif path wraps the compressed stream into IEC61937
++        // 16-bit stereo PCM and plays it through an ENCODING_IEC61937 AudioTrack.
++        // Plenty of TV HALs refuse that (their HDMI-ARC device port declares no
++        // PCM profile), the AudioTrack then fails to initialize
++        // ("AudioTrack.getState failed") and mpv silently falls back to decoded
++        // PCM, which the ARC downmixes to stereo.
++        //
++        // ad_spdif.c is patched to hand us the raw compressed packets (no
++        // IEC61937 wrap), so we can open the AudioTrack with the direct
++        // bitstream encoding, which those TVs do accept.
++        p->format = spdif_to_direct_encoding(ao->format);
++        if (!p->format) {
++            MP_ERR(ao, "no direct passthrough encoding for this format\n");
+             return -1;
+         }
++        MP_INFO(ao, "direct passthrough: android encoding=%d rate=%d\n",
++                p->format, ao->samplerate);
+     } else if (ao->format == AF_FORMAT_U8) {
+         p->format = AudioFormat.ENCODING_PCM_8BIT;
+     } else if (p->cfg_pcm_float && af_fmt_is_float(ao->format)) {
+@@ -727,11 +765,10 @@
+         AudioFormat.CHANNEL_OUT_7POINT1_SURROUND,
+     };
+     static_assert(MP_ARRAY_SIZE(layout_map) == MP_ARRAY_SIZE(layouts), "");
+-    if (p->format == AudioFormat.ENCODING_IEC61937) {
++    if (af_fmt_is_spdif(ao->format)) {
++        // A compressed bitstream AudioTrack is always opened as 2ch; the real
++        // channel count travels inside the bitstream itself.
+         p->channel_config = AudioFormat.CHANNEL_OUT_STEREO;
+-        // Android accepts an 8-channel IEC61937 carrier from API 31 onward.
+-        if (BuildVersion.SDK_INT >= ANDROID_API_LEVEL_S && ao->channels.num == 8)
+-            p->channel_config = AudioFormat.CHANNEL_OUT_7POINT1_SURROUND;
+     } else {
+         struct mp_chmap_sel sel = {0};
+         for (int i = 0; i < MP_ARRAY_SIZE(layouts); i++) {
+@@ -752,8 +789,17 @@
+         p->format
+     );
+     if (MP_JNI_EXCEPTION_LOG(ao) < 0 || buffer_size <= 0) {
+-        MP_FATAL(ao, "AudioTrack.getMinBufferSize returned an invalid size: %d", buffer_size);
+-        return -1;
++        if (af_fmt_is_spdif(ao->format)) {
++            // getMinBufferSize() does not accept every compressed encoding on
++            // every device. Fall back to a computed size instead of failing the
++            // whole AO (that would silently drop us back to decoded PCM).
++            MP_WARN(ao, "AudioTrack.getMinBufferSize failed for compressed "
++                        "format, using computed fallback\n");
++            buffer_size = 0;
++        } else {
++            MP_FATAL(ao, "AudioTrack.getMinBufferSize returned an invalid size: %d", buffer_size);
++            return -1;
++        }
+     }
+ 
+     // Choose double of the minimum buffer size suggested by the driver, but not
+@@ -764,6 +810,7 @@
+     min = MP_ALIGN_UP(min, bps);
+     max = MP_ALIGN_UP(max, bps);
+     p->size = MPCLAMP(buffer_size * 2, min, max);
++    p->size = MP_ALIGN_UP(p->size, bps * ao->channels.num);
+     MP_VERBOSE(ao, "Setting bufferSize = %d (driver=%d, min=%d, max=%d)\n", p->size, buffer_size, min, max);
+     mp_assert(p->size % bps == 0);
+     ao->device_buffer = p->size / bps;
+--- a/audio/decode/ad_spdif.c
++++ b/audio/decode/ad_spdif.c
+@@ -56,6 +56,7 @@
+     unsigned int     dropped_startup_packets;
+     struct mp_aframe *fmt;
+     int              sstride;
++    bool             direct_passthrough;
+     struct mp_aframe_pool *pool;
+ 
+     struct mp_decoder public;
+@@ -235,6 +236,59 @@
+ 
+     int profile = spdif_ctx->codec_profile;
+     int c_rate = spdif_ctx->codec_rate;
++
++    // Direct (non-IEC61937) passthrough: emit the compressed packets as they
++    // come out of the demuxer, without wrapping them into IEC61937 PCM. The
++    // AudioTrack AO then opens them with the matching compressed encoding.
++    {
++        int raw_format = 0;
++        int raw_rate = 0;
++        switch (spdif_ctx->codec_id) {
++        case AV_CODEC_ID_AC3:
++            raw_format = AF_FORMAT_S_AC3;
++            raw_rate = c_rate > 0 ? c_rate : 48000;
++            break;
++        case AV_CODEC_ID_EAC3:
++            raw_format = AF_FORMAT_S_EAC3;
++            raw_rate = c_rate > 0 ? c_rate : 48000;
++            break;
++        case AV_CODEC_ID_DTS:
++            if (spdif_ctx->use_dts_hd && dts_profile_maybe_hd(profile)) {
++                raw_format = AF_FORMAT_S_DTSHD;
++                raw_rate = c_rate > 0 ? c_rate : 192000;
++            } else {
++                raw_format = AF_FORMAT_S_DTS;
++                raw_rate = c_rate > 0 ? c_rate : 48000;
++            }
++            break;
++        case AV_CODEC_ID_TRUEHD:
++            raw_format = AF_FORMAT_S_TRUEHD;
++            raw_rate = c_rate > 0 ? c_rate : 192000;
++            break;
++        default:
++            // No direct equivalent (AAC/MP3): fall through to the legacy
++            // IEC61937 path below.
++            break;
++        }
++
++        if (raw_format) {
++            spdif_ctx->fmt = mp_aframe_create();
++            talloc_steal(spdif_ctx, spdif_ctx->fmt);
++
++            struct mp_chmap chmap;
++            mp_chmap_from_channels(&chmap, 2);
++            mp_aframe_set_chmap(spdif_ctx->fmt, &chmap);
++            mp_aframe_set_format(spdif_ctx->fmt, raw_format);
++            mp_aframe_set_rate(spdif_ctx->fmt, raw_rate);
++            spdif_ctx->sstride = mp_aframe_get_sstride(spdif_ctx->fmt);
++            spdif_ctx->need_close = false;
++            spdif_ctx->direct_passthrough = true;
++
++            MP_INFO(da, "direct passthrough: format=%d rate=%d sstride=%d\n",
++                    raw_format, raw_rate, spdif_ctx->sstride);
++            return 0;
++        }
++    }
+ 
+     AVFormatContext *lavf_ctx  = avformat_alloc_context();
+     if (!lavf_ctx)
+@@ -380,7 +434,7 @@
+     }
+     mp_set_av_packet(spdif_ctx->avpkt, mpkt, NULL);
+     spdif_ctx->avpkt->pts = spdif_ctx->avpkt->dts = 0;
+-    if (!spdif_ctx->lavf_ctx) {
++    if (!spdif_ctx->fmt) {
+         // A fresh TrueHD spdif muxer needs a major sync to initialize its
+         // stream parameters, so wait for major sync before initializing.
+         if (spdif_ctx->codec_id == AV_CODEC_ID_TRUEHD &&
+@@ -400,7 +454,31 @@
+         if (init_filter(da) < 0)
+             goto done;
+         mp_assert(spdif_ctx->avpkt);
+-        mp_assert(spdif_ctx->lavf_ctx);
++        mp_assert(spdif_ctx->direct_passthrough || spdif_ctx->lavf_ctx);
++    }
++
++    // Direct (non-IEC61937) passthrough: hand the compressed bytes to the AO
++    // unmodified. The frame size is stride aligned, so a packet tail that is
++    // not aligned is zero padded (mpv's own spdif path pads the same way).
++    if (spdif_ctx->direct_passthrough) {
++        int bytes = spdif_ctx->avpkt->size;
++        int samples = (bytes + spdif_ctx->sstride - 1) / spdif_ctx->sstride;
++
++        out = mp_aframe_new_ref(spdif_ctx->fmt);
++        if (mp_aframe_pool_allocate(spdif_ctx->pool, out, samples) < 0) {
++            TA_FREEP(&out);
++            goto done;
++        }
++        uint8_t **rawdata = mp_aframe_get_data_rw(out);
++        if (!rawdata) {
++            TA_FREEP(&out);
++            goto done;
++        }
++        memcpy(rawdata[0], spdif_ctx->avpkt->data, bytes);
++        memset(rawdata[0] + bytes, 0, samples * spdif_ctx->sstride - bytes);
++        spdif_ctx->out_buffer_len = bytes;
++        mp_aframe_set_pts(out, pts);
++        goto done;
+     }
+ 
+     spdif_ctx->out_buffer_len  = 0;

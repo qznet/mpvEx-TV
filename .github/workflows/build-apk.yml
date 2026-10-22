@@ -2,9 +2,9 @@ name: Build APK
 
 on:
   push:
-    branches: [main, master, fongmi-kernel]
+    branches: [main, master, fongmi-kernel, fongmi-kernel-passthrough]
   workflow_dispatch:
-    branches: [fongmi-kernel]
+    branches: [fongmi-kernel, fongmi-kernel-passthrough]
 
 jobs:
   build:
