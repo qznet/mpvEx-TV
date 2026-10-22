@@ -123,6 +123,10 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
                 }
                 return@postDelayed
             }
+            // The OSD window is live now, so it is safe to let mpv own a VO window.
+            // force-window must only be enabled here (not in surfaceCreated) so that the
+            // VO is never opened before android-osd-wid is attached.
+            MPVLib.setOptionString("force-window", "yes")
             reopenVo()
             recoverVideoTrackIfMissing()
             if (MPVLib.getPropertyInt("video-params/w") != null) {
@@ -278,19 +282,28 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     override fun surfaceCreated(holder: SurfaceHolder) {
         Log.w(TAG, "attaching surface")
         MPVLib.attachSurface(holder.surface)
-        // This forces mpv to render subs/osd/whatever into our surface even if it would ordinarily not
-        MPVLib.setOptionString("force-window", "yes")
+        // NOTE: do NOT set force-window="yes" here. That makes mpv open the VO window
+        // immediately (even with no file loaded), racing ahead of the async OSD-window
+        // attach and failing with "No Android OSD Surface is attached" on the first video
+        // (black screen). force-window is only needed for the *idle* window, and is set in
+        // ensureVideoOutput() AFTER android-osd-wid is confirmed. During playback the VO
+        // opens on loadfile() with the OSD window already attached, so no black screen.
 
-        // Ensure the VO is up before loadfile (critical for mediacodec_embed). Opening is
-        // verify-and-retry: the OSD window (android-osd-wid) is attached asynchronously by
-        // libmpv while the vo property is applied synchronously, so the first open can fail
-        // with "No Android OSD Surface is attached". ensureVideoOutput() re-attaches the OSD
-        // surface and re-opens the VO until video-params/w reports a live picture.
-        ensureVideoOutput()
+        // mediacodec_embed renders video through MediaCodec directly to the main surface, but it
+        // REQUIRES the OSD window (android-osd-wid) to be attached at the moment the VO opens.
+        // attachOsdSurface() lands that window asynchronously inside libmpv, so if we let mpv open
+        // the VO immediately (via loadfile) the first open races ahead and fails with
+        // "No Android OSD Surface is attached" -> "Video: no video" (black screen until the next
+        // file is loaded). Attach the OSD window now and only start playback once android-osd-wid
+        // is actually reported back, so the very first VO open succeeds.
+        attachOsdNow()
 
         if (filePath != null) {
-            MPVLib.command("loadfile", filePath as String)
+            val path = filePath
             filePath = null
+            loadFileAfterOsdReady(path)
+        } else {
+            ensureVideoOutput()
         }
 
         // mediacodec_embed cannot letterbox inside mpv, so the SurfaceView is sized at the
@@ -300,6 +313,42 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
         if (voInUse == "mediacodec_embed" && viewTreeObserver.isAlive) {
             viewTreeObserver.addOnGlobalLayoutListener(embedRelayoutListener)
         }
+    }
+
+    /** Attach the OSD window to libmpv right now (idempotent; harmless if already attached). */
+    private fun attachOsdNow() {
+        osdSurface?.holder?.surface?.let { s ->
+            if (s.isValid) {
+                MPVLib.attachOsdSurface(s)
+                osdSurfaceReady = true
+            }
+        }
+    }
+
+    /**
+     * Start the first playback only after android-osd-wid is reported present, so the
+     * mediacodec_embed VO open does not race the async OSD attach. Falls back to loading
+     * anyway after a short cap (then asks ensureVideoOutput() to retry the VO) so we never hang.
+     */
+    private fun loadFileAfterOsdReady(path: String) {
+        var tries = 0
+        val maxTries = 25 // ~ up to 500 ms at a 20 ms poll
+        val runnable = object : Runnable {
+            override fun run() {
+                val wid = runCatching { MPVLib.getPropertyString("android-osd-wid") }.getOrNull()
+                if (!wid.isNullOrBlank() && wid != "0") {
+                    Log.i(TAG, "OSD window ready ($wid); loading first file")
+                    MPVLib.command("loadfile", path)
+                } else if (tries++ < maxTries) {
+                    postDelayed(this, 20)
+                } else {
+                    Log.w(TAG, "OSD window never became ready; loading anyway and retrying VO")
+                    MPVLib.command("loadfile", path)
+                    ensureVideoOutput()
+                }
+            }
+        }
+        postDelayed(runnable, 20)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
