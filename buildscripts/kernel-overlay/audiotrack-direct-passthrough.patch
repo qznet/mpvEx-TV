@@ -1,6 +1,18 @@
 --- a/audio/out/ao_audiotrack.c
 +++ b/audio/out/ao_audiotrack.c
-@@ -191,6 +191,11 @@
+@@ -63,6 +63,11 @@
+ 
+     bool cfg_pcm_float;
+     int cfg_session_id;
++
++    // Direct (non-IEC61937) passthrough state.
++    bool compressed_passthrough;
++    double measured_byte_rate;
++    bool rate_logged;
+ 
+     bool thread_terminate;
+     bool thread_created;
+@@ -191,6 +196,11 @@
      jint ENCODING_PCM_16BIT;
      jint ENCODING_PCM_FLOAT;
      jint ENCODING_IEC61937;
@@ -12,7 +24,7 @@
      jint CHANNEL_OUT_MONO;
      jint CHANNEL_OUT_STEREO;
      jint CHANNEL_OUT_FRONT_CENTER;
-@@ -206,6 +211,11 @@
+@@ -206,6 +216,11 @@
      {"ENCODING_PCM_16BIT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_16BIT), 1},
      {"ENCODING_PCM_FLOAT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_FLOAT), 1},
      {"ENCODING_IEC61937", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_IEC61937), 0},
@@ -24,7 +36,38 @@
      {"CHANNEL_OUT_MONO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_MONO), 1},
      {"CHANNEL_OUT_STEREO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_STEREO), 1},
      {"CHANNEL_OUT_FRONT_CENTER", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_FRONT_CENTER), 1},
-@@ -661,6 +671,20 @@
+@@ -601,7 +616,30 @@
+             ts += MP_TIME_S_TO_NS(read_samples / (double)(ao->samplerate));
+             ts += MP_TIME_S_TO_NS(AudioTrack_getLatency(ao));
+             int samples = ao_read_data(ao, &p->chunk, read_samples, ts, NULL, false, false);
++            int64_t w0 = mp_time_ns();
+             int ret = AudioTrack_write(ao, samples * ao->sstride);
++            int64_t wdt = mp_time_ns() - w0;
++            if (p->compressed_passthrough && ret > 0 && wdt > 20 * 1000) {
++                // Only a write that actually blocked tells us the consumption
++                // rate (a non-blocking write returns in microseconds).
++                double rate = (double)ret * 1e9 / (double)wdt;
++                p->measured_byte_rate = p->measured_byte_rate
++                    ? 0.8 * p->measured_byte_rate + 0.2 * rate
++                    : rate;
++                int want = (int)(p->measured_byte_rate / ao->sstride);
++                if (want > 0 && want != ao->samplerate) {
++                    ao->samplerate = want;
++                    if (!p->rate_logged) {
++                        p->rate_logged = true;
++                        MP_INFO(ao, "direct passthrough: measured %d B/s -> "
++                                    "ao samplerate %d\n",
++                                (int)p->measured_byte_rate, want);
++                    } else {
++                        MP_VERBOSE(ao, "direct passthrough: rate %d B/s -> %d\n",
++                                  (int)p->measured_byte_rate, want);
++                    }
++                }
++            }
+             if (ret >= 0) {
+                 p->written_frames += ret / ao->sstride;
+             } else if (ret == AudioManager.ERROR_DEAD_OBJECT) {
+@@ -661,6 +699,20 @@
      uninit_jni(ao);
  }
  
@@ -45,7 +88,7 @@
  static int init(struct ao *ao)
  {
      struct priv *p = ao->priv;
-@@ -675,11 +699,25 @@
+@@ -675,11 +727,26 @@
          return -1;
  
      if (af_fmt_is_spdif(ao->format)) {
@@ -69,12 +112,13 @@
 +            MP_ERR(ao, "no direct passthrough encoding for this format\n");
              return -1;
          }
++        p->compressed_passthrough = true;
 +        MP_INFO(ao, "direct passthrough: android encoding=%d rate=%d\n",
 +                p->format, ao->samplerate);
      } else if (ao->format == AF_FORMAT_U8) {
          p->format = AudioFormat.ENCODING_PCM_8BIT;
      } else if (p->cfg_pcm_float && af_fmt_is_float(ao->format)) {
-@@ -727,11 +765,10 @@
+@@ -727,11 +794,10 @@
          AudioFormat.CHANNEL_OUT_7POINT1_SURROUND,
      };
      static_assert(MP_ARRAY_SIZE(layout_map) == MP_ARRAY_SIZE(layouts), "");
@@ -89,7 +133,7 @@
      } else {
          struct mp_chmap_sel sel = {0};
          for (int i = 0; i < MP_ARRAY_SIZE(layouts); i++) {
-@@ -752,8 +789,17 @@
+@@ -752,8 +818,17 @@
          p->format
      );
      if (MP_JNI_EXCEPTION_LOG(ao) < 0 || buffer_size <= 0) {
@@ -109,7 +153,7 @@
      }
  
      // Choose double of the minimum buffer size suggested by the driver, but not
-@@ -764,6 +810,7 @@
+@@ -764,6 +839,7 @@
      min = MP_ALIGN_UP(min, bps);
      max = MP_ALIGN_UP(max, bps);
      p->size = MPCLAMP(buffer_size * 2, min, max);
@@ -119,15 +163,18 @@
      ao->device_buffer = p->size / bps;
 --- a/audio/decode/ad_spdif.c
 +++ b/audio/decode/ad_spdif.c
-@@ -56,6 +56,7 @@
+@@ -56,6 +56,10 @@
      unsigned int     dropped_startup_packets;
      struct mp_aframe *fmt;
      int              sstride;
 +    bool             direct_passthrough;
++    uint8_t          carry[16];
++    int              carry_len;
++    double           carry_pts;
      struct mp_aframe_pool *pool;
  
      struct mp_decoder public;
-@@ -235,6 +236,59 @@
+@@ -235,6 +239,59 @@
  
      int profile = spdif_ctx->codec_profile;
      int c_rate = spdif_ctx->codec_rate;
@@ -187,7 +234,7 @@
  
      AVFormatContext *lavf_ctx  = avformat_alloc_context();
      if (!lavf_ctx)
-@@ -380,7 +434,7 @@
+@@ -380,7 +437,7 @@
      }
      mp_set_av_packet(spdif_ctx->avpkt, mpkt, NULL);
      spdif_ctx->avpkt->pts = spdif_ctx->avpkt->dts = 0;
@@ -196,7 +243,7 @@
          // A fresh TrueHD spdif muxer needs a major sync to initialize its
          // stream parameters, so wait for major sync before initializing.
          if (spdif_ctx->codec_id == AV_CODEC_ID_TRUEHD &&
-@@ -400,7 +454,31 @@
+@@ -400,7 +457,56 @@
          if (init_filter(da) < 0)
              goto done;
          mp_assert(spdif_ctx->avpkt);
@@ -205,14 +252,31 @@
 +    }
 +
 +    // Direct (non-IEC61937) passthrough: hand the compressed bytes to the AO
-+    // unmodified. The frame size is stride aligned, so a packet tail that is
-+    // not aligned is zero padded (mpv's own spdif path pads the same way).
++    // unmodified.
++    //
++    // The AO consumes whole "samples" of sstride bytes, so a packet whose size
++    // is not a multiple of the stride would have to be padded. Zero padding
++    // injects garbage into the compressed stream and makes the platform's
++    // bitstream parser resync (audible glitches, stalls). Instead the
++    // unaligned tail is carried over to the next packet, which keeps the byte
++    // stream exactly as the demuxer produced it.
 +    if (spdif_ctx->direct_passthrough) {
 +        int bytes = spdif_ctx->avpkt->size;
-+        int samples = (bytes + spdif_ctx->sstride - 1) / spdif_ctx->sstride;
++        int stride = spdif_ctx->sstride;
++        int total = spdif_ctx->carry_len + bytes;
++        int emit = (total / stride) * stride;
++
++        if (emit <= 0) {
++            // Not enough for one aligned sample yet: stash and continue.
++            memcpy(spdif_ctx->carry, spdif_ctx->avpkt->data, bytes);
++            spdif_ctx->carry_len = bytes;
++            spdif_ctx->carry_pts = pts;
++            drop_packet = true;
++            goto done;
++        }
 +
 +        out = mp_aframe_new_ref(spdif_ctx->fmt);
-+        if (mp_aframe_pool_allocate(spdif_ctx->pool, out, samples) < 0) {
++        if (mp_aframe_pool_allocate(spdif_ctx->pool, out, emit / stride) < 0) {
 +            TA_FREEP(&out);
 +            goto done;
 +        }
@@ -221,10 +285,18 @@
 +            TA_FREEP(&out);
 +            goto done;
 +        }
-+        memcpy(rawdata[0], spdif_ctx->avpkt->data, bytes);
-+        memset(rawdata[0] + bytes, 0, samples * spdif_ctx->sstride - bytes);
-+        spdif_ctx->out_buffer_len = bytes;
-+        mp_aframe_set_pts(out, pts);
++        if (spdif_ctx->carry_len) {
++            memcpy(rawdata[0], spdif_ctx->carry, spdif_ctx->carry_len);
++            memcpy(rawdata[0] + spdif_ctx->carry_len, spdif_ctx->avpkt->data, bytes);
++        } else {
++            memcpy(rawdata[0], spdif_ctx->avpkt->data, bytes);
++        }
++        spdif_ctx->carry_len = total - emit;
++        if (spdif_ctx->carry_len)
++            memcpy(spdif_ctx->carry, rawdata[0] + emit, spdif_ctx->carry_len);
++
++        spdif_ctx->out_buffer_len = emit;
++        mp_aframe_set_pts(out, spdif_ctx->carry_len ? spdif_ctx->carry_pts : pts);
 +        goto done;
      }
  
