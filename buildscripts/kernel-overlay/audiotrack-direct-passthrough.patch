@@ -1,16 +1,19 @@
 --- a/audio/out/ao_audiotrack.c
 +++ b/audio/out/ao_audiotrack.c
-@@ -63,6 +63,9 @@
+@@ -63,6 +63,12 @@
  
      bool cfg_pcm_float;
      int cfg_session_id;
 +
-+    // Codec sample rate for direct compressed passthrough (e.g. 48000).
++    // Direct (non-IEC61937) compressed passthrough state.
++    bool compressed_passthrough;
++    // Codec sample rate for the AudioTrack (e.g. 48000 for E-AC-3). mpv's
++    // ao->samplerate instead carries the byte accounting rate (bitrate/8/sstride).
 +    int codec_samplerate;
  
      bool thread_terminate;
      bool thread_created;
-@@ -191,6 +194,11 @@
+@@ -191,6 +197,11 @@
      jint ENCODING_PCM_16BIT;
      jint ENCODING_PCM_FLOAT;
      jint ENCODING_IEC61937;
@@ -22,7 +25,7 @@
      jint CHANNEL_OUT_MONO;
      jint CHANNEL_OUT_STEREO;
      jint CHANNEL_OUT_FRONT_CENTER;
-@@ -206,6 +214,11 @@
+@@ -206,6 +217,11 @@
      {"ENCODING_PCM_16BIT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_16BIT), 1},
      {"ENCODING_PCM_FLOAT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_FLOAT), 1},
      {"ENCODING_IEC61937", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_IEC61937), 0},
@@ -34,7 +37,7 @@
      {"CHANNEL_OUT_MONO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_MONO), 1},
      {"CHANNEL_OUT_STEREO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_STEREO), 1},
      {"CHANNEL_OUT_FRONT_CENTER", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_FRONT_CENTER), 1},
-@@ -661,6 +674,20 @@
+@@ -661,6 +677,20 @@
      uninit_jni(ao);
  }
  
@@ -55,7 +58,7 @@
  static int init(struct ao *ao)
  {
      struct priv *p = ao->priv;
-@@ -675,11 +702,36 @@
+@@ -675,11 +705,36 @@
          return -1;
  
      if (af_fmt_is_spdif(ao->format)) {
@@ -95,7 +98,7 @@
      } else if (ao->format == AF_FORMAT_U8) {
          p->format = AudioFormat.ENCODING_PCM_8BIT;
      } else if (p->cfg_pcm_float && af_fmt_is_float(ao->format)) {
-@@ -701,7 +753,11 @@
+@@ -701,7 +756,11 @@
              ao->samplerate = MPMIN(samplerate, ao->samplerate);
          }
      }
@@ -108,7 +111,7 @@
  
      /* https://developer.android.com/reference/android/media/AudioFormat#channelPositionMask */
      static const struct mp_chmap layouts[] = {
-@@ -727,11 +783,10 @@
+@@ -727,11 +786,10 @@
          AudioFormat.CHANNEL_OUT_7POINT1_SURROUND,
      };
      static_assert(MP_ARRAY_SIZE(layout_map) == MP_ARRAY_SIZE(layouts), "");
@@ -123,7 +126,7 @@
      } else {
          struct mp_chmap_sel sel = {0};
          for (int i = 0; i < MP_ARRAY_SIZE(layouts); i++) {
-@@ -752,8 +807,17 @@
+@@ -752,8 +810,17 @@
          p->format
      );
      if (MP_JNI_EXCEPTION_LOG(ao) < 0 || buffer_size <= 0) {
@@ -143,7 +146,7 @@
      }
  
      // Choose double of the minimum buffer size suggested by the driver, but not
-@@ -764,6 +828,7 @@
+@@ -764,6 +831,7 @@
      min = MP_ALIGN_UP(min, bps);
      max = MP_ALIGN_UP(max, bps);
      p->size = MPCLAMP(buffer_size * 2, min, max);
