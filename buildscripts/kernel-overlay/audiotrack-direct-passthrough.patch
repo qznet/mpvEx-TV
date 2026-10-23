@@ -1,6 +1,16 @@
 --- a/audio/out/ao_audiotrack.c
 +++ b/audio/out/ao_audiotrack.c
-@@ -191,6 +191,11 @@
+@@ -63,6 +63,9 @@
+ 
+     bool cfg_pcm_float;
+     int cfg_session_id;
++
++    // Codec sample rate for direct compressed passthrough (e.g. 48000).
++    int codec_samplerate;
+ 
+     bool thread_terminate;
+     bool thread_created;
+@@ -191,6 +194,11 @@
      jint ENCODING_PCM_16BIT;
      jint ENCODING_PCM_FLOAT;
      jint ENCODING_IEC61937;
@@ -12,7 +22,7 @@
      jint CHANNEL_OUT_MONO;
      jint CHANNEL_OUT_STEREO;
      jint CHANNEL_OUT_FRONT_CENTER;
-@@ -206,6 +211,11 @@
+@@ -206,6 +214,11 @@
      {"ENCODING_PCM_16BIT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_16BIT), 1},
      {"ENCODING_PCM_FLOAT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_FLOAT), 1},
      {"ENCODING_IEC61937", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_IEC61937), 0},
@@ -24,7 +34,7 @@
      {"CHANNEL_OUT_MONO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_MONO), 1},
      {"CHANNEL_OUT_STEREO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_STEREO), 1},
      {"CHANNEL_OUT_FRONT_CENTER", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_FRONT_CENTER), 1},
-@@ -661,6 +671,20 @@
+@@ -661,6 +674,20 @@
      uninit_jni(ao);
  }
  
@@ -45,7 +55,7 @@
  static int init(struct ao *ao)
  {
      struct priv *p = ao->priv;
-@@ -675,11 +699,29 @@
+@@ -675,11 +702,36 @@
          return -1;
  
      if (af_fmt_is_spdif(ao->format)) {
@@ -73,12 +83,32 @@
 +            MP_ERR(ao, "no direct passthrough encoding for this format\n");
              return -1;
          }
-+        MP_INFO(ao, "direct passthrough: android encoding=%d rate=%d\n",
-+                p->format, ao->samplerate);
++        // ao->samplerate is the mpv accounting rate here (bitrate/8/sstride).
++        // Remember the codec sample rate that AudioTrack needs, and restore it
++        // into p->samplerate below (after the getNativeOutputSampleRate clamp,
++        // which must not touch the accounting rate).
++        p->compressed_passthrough = true;
++        p->codec_samplerate = ao->samplerate;
++        MP_INFO(ao, "direct passthrough: android encoding=%d "
++                    "codec_rate=%d accounting_rate=%d\n",
++                p->format, p->codec_samplerate, ao->samplerate);
      } else if (ao->format == AF_FORMAT_U8) {
          p->format = AudioFormat.ENCODING_PCM_8BIT;
      } else if (p->cfg_pcm_float && af_fmt_is_float(ao->format)) {
-@@ -727,11 +769,10 @@
+@@ -701,7 +753,11 @@
+             ao->samplerate = MPMIN(samplerate, ao->samplerate);
+         }
+     }
+-    p->samplerate = ao->samplerate;
++    // For direct compressed passthrough ao->samplerate is a byte rate, not a
++    // sample rate. AudioTrack.setSampleRate()/getMinBufferSize() need the
++    // codec's real rate, otherwise the platform rejects the track.
++    p->samplerate = p->compressed_passthrough ? p->codec_samplerate
++                                               : ao->samplerate;
+ 
+     /* https://developer.android.com/reference/android/media/AudioFormat#channelPositionMask */
+     static const struct mp_chmap layouts[] = {
+@@ -727,11 +783,10 @@
          AudioFormat.CHANNEL_OUT_7POINT1_SURROUND,
      };
      static_assert(MP_ARRAY_SIZE(layout_map) == MP_ARRAY_SIZE(layouts), "");
@@ -93,7 +123,7 @@
      } else {
          struct mp_chmap_sel sel = {0};
          for (int i = 0; i < MP_ARRAY_SIZE(layouts); i++) {
-@@ -752,8 +793,17 @@
+@@ -752,8 +807,17 @@
          p->format
      );
      if (MP_JNI_EXCEPTION_LOG(ao) < 0 || buffer_size <= 0) {
@@ -113,7 +143,7 @@
      }
  
      // Choose double of the minimum buffer size suggested by the driver, but not
-@@ -764,6 +814,7 @@
+@@ -764,6 +828,7 @@
      min = MP_ALIGN_UP(min, bps);
      max = MP_ALIGN_UP(max, bps);
      p->size = MPCLAMP(buffer_size * 2, min, max);
@@ -213,7 +243,7 @@
          // A fresh TrueHD spdif muxer needs a major sync to initialize its
          // stream parameters, so wait for major sync before initializing.
          if (spdif_ctx->codec_id == AV_CODEC_ID_TRUEHD &&
-@@ -400,7 +467,92 @@
+@@ -400,7 +467,98 @@
          if (init_filter(da) < 0)
              goto done;
          mp_assert(spdif_ctx->avpkt);
@@ -245,7 +275,7 @@
 +            }
 +            spdif_ctx->raw_alloc = na;
 +        }
-+        if (!spdif_ctx->raw_len)
++        if (!spdif_ctx->raw_len && pts != MP_NOPTS_VALUE)
 +            spdif_ctx->raw_pts = pts;
 +        memcpy(spdif_ctx->raw_buf + spdif_ctx->raw_len,
 +               spdif_ctx->avpkt->data, bytes);
@@ -254,11 +284,17 @@
 +        if (!spdif_ctx->raw_bitrate) {
 +            // Prefer the bitrate the demuxer knows; fall back to measuring it
 +            // from the packet sizes and timestamps.
++            //
++            // NOTE: demux_packet.pts is in SECONDS (demux_lavf.c does
++            // dp->pts = mp_pts_from_av(pkt->pts, &st->time_base), and
++            // mp_pts_from_av() returns av_pts * av_q2d(tb)). Dividing by 1e9
++            // made the measured span ~0 forever, so the rate was never
++            // established and every packet got dropped (endless buffering).
 +            int br = spdif_ctx->codec ? spdif_ctx->codec->bitrate : 0;
 +            if (br > 0) {
 +                spdif_ctx->raw_bitrate = br;
-+            } else {
-+                double span = (pts - spdif_ctx->raw_pts) / 1e9;
++            } else if (pts != MP_NOPTS_VALUE) {
++                double span = pts - spdif_ctx->raw_pts;   // seconds
 +                if (span >= 0.25 && spdif_ctx->raw_len > 0)
 +                    spdif_ctx->raw_bitrate = (int)(spdif_ctx->raw_len * 8 / span);
 +            }
