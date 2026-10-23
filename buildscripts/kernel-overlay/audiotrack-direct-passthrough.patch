@@ -1,19 +1,48 @@
 --- a/audio/out/ao_audiotrack.c
 +++ b/audio/out/ao_audiotrack.c
-@@ -63,6 +63,12 @@
- 
+@@ -64,12 +64,41 @@
      bool cfg_pcm_float;
      int cfg_session_id;
-+
+ 
 +    // Direct (non-IEC61937) compressed passthrough state.
 +    bool compressed_passthrough;
 +    // Codec sample rate for the AudioTrack (e.g. 48000 for E-AC-3). mpv's
 +    // ao->samplerate instead carries the byte accounting rate (bitrate/8/sstride).
 +    int codec_samplerate;
- 
++
      bool thread_terminate;
      bool thread_created;
-@@ -191,6 +197,11 @@
+     mp_thread thread;
+     mp_mutex lock;
+     mp_cond wakeup;
+ };
++
++// Published by ad_spdif.c while a direct compressed passthrough stream is
++// active; 0 otherwise.
++//
++// ao_init() in audio/out/ao.c only ever hands a driver the sample rate, the
++// format and the channel map -- never the codec parameters. Once ad_spdif
++// repurposes the frame rate as a byte accounting rate (bitrate/8/sstride) the
++// codec's real sample rate is unrecoverable from this side, yet that is exactly
++// what AudioTrack.setSampleRate() needs (48000 for E-AC-3). Without it the
++// platform rejects the compressed format, the AO fails to initialize and mpv
++// silently falls back to decoded PCM (i.e. stereo over HDMI-ARC).
++extern int mp_direct_passthrough_codec_rate;
++
++// True while the audio format is a compressed bitstream (either one of the
++// direct encodings or the legacy IEC61937 carrier). For those the platform's
++// frame/position counters are codec frames, not mpv's byte accounting frames,
++// so every IEC61937 special case below has to cover the direct encodings as
++// well.
++static bool is_bitstream_passthrough(struct ao *ao)
++{
++    struct priv *p = ao->priv;
++    return p->compressed_passthrough || af_fmt_is_spdif(ao->format);
++}
+ 
+ static struct JNIByteBuffer {
+     jclass clazz;
+@@ -191,6 +220,11 @@
      jint ENCODING_PCM_16BIT;
      jint ENCODING_PCM_FLOAT;
      jint ENCODING_IEC61937;
@@ -25,7 +54,7 @@
      jint CHANNEL_OUT_MONO;
      jint CHANNEL_OUT_STEREO;
      jint CHANNEL_OUT_FRONT_CENTER;
-@@ -206,6 +217,11 @@
+@@ -206,6 +240,11 @@
      {"ENCODING_PCM_16BIT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_16BIT), 1},
      {"ENCODING_PCM_FLOAT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_FLOAT), 1},
      {"ENCODING_IEC61937", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_IEC61937), 0},
@@ -37,7 +66,34 @@
      {"CHANNEL_OUT_MONO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_MONO), 1},
      {"CHANNEL_OUT_STEREO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_STEREO), 1},
      {"CHANNEL_OUT_FRONT_CENTER", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_FRONT_CENTER), 1},
-@@ -661,6 +677,20 @@
+@@ -409,7 +448,7 @@
+     int stable_count = 20;
+     int64_t wait = p->timestamp_stable < stable_count ? 50000000 : 3000000000;
+ 
+-    if (state == AudioTrack.PLAYSTATE_PLAYING && p->format != AudioFormat.ENCODING_IEC61937 &&
++    if (state == AudioTrack.PLAYSTATE_PLAYING && !is_bitstream_passthrough(ao) &&
+         (p->timestamp_fetched == 0 || now - p->timestamp_fetched >= wait)) {
+         if (!p->timestamp_fetched)
+             p->timestamp_stable = 0;
+@@ -449,7 +488,7 @@
+     }
+ 
+ 
+-    if (p->format == AudioFormat.ENCODING_IEC61937) {
++    if (is_bitstream_passthrough(ao)) {
+         if (p->reset_pending) {
+             // after a flush(), playbackHeadPosition will not reset to 0 right away.
+             // sometimes, it will never reset at all.
+@@ -493,7 +532,7 @@
+     uint32_t diff = p->written_frames - playhead;
+     double delay = diff / (double)(ao->samplerate);
+     if (!p->timestamp_set &&
+-        p->format != AudioFormat.ENCODING_IEC61937)
++        !is_bitstream_passthrough(ao))
+         delay += (double)MP_JNI_CALL_INT(p->audiotrack, AudioTrack.getLatency)/1000.0;
+     if (delay > 2.0) {
+         //MP_WARN(ao, "getLatency: written=%u playhead=%u diff=%u delay=%f\n", p->written_frames, playhead, diff, delay);
+@@ -661,6 +700,20 @@
      uninit_jni(ao);
  }
  
@@ -58,7 +114,7 @@
  static int init(struct ao *ao)
  {
      struct priv *p = ao->priv;
-@@ -675,11 +705,36 @@
+@@ -675,11 +728,44 @@
          return -1;
  
      if (af_fmt_is_spdif(ao->format)) {
@@ -86,19 +142,27 @@
 +            MP_ERR(ao, "no direct passthrough encoding for this format\n");
              return -1;
          }
-+        // ao->samplerate is the mpv accounting rate here (bitrate/8/sstride).
-+        // Remember the codec sample rate that AudioTrack needs, and restore it
-+        // into p->samplerate below (after the getNativeOutputSampleRate clamp,
-+        // which must not touch the accounting rate).
++        // ao->samplerate is the mpv accounting rate here (bitrate/8/sstride),
++        // so it must NOT be used as the codec rate -- doing that opened the
++        // AudioTrack with e.g. 22500 Hz + ENCODING_E_AC3, which the platform
++        // rejects ("AudioTrack.getState failed"), sending every video back to
++        // decoded PCM (stereo). ad_spdif publishes the real codec rate.
 +        p->compressed_passthrough = true;
-+        p->codec_samplerate = ao->samplerate;
++        int hint = mp_direct_passthrough_codec_rate;
++        if (hint >= 8000 && hint <= 768000) {
++            p->codec_samplerate = hint;
++        } else {
++            MP_WARN(ao, "direct passthrough: no usable codec sample rate hint "
++                        "(%d), assuming 48000\n", hint);
++            p->codec_samplerate = 48000;
++        }
 +        MP_INFO(ao, "direct passthrough: android encoding=%d "
-+                    "codec_rate=%d accounting_rate=%d\n",
-+                p->format, p->codec_samplerate, ao->samplerate);
++                    "codec_rate=%d accounting_rate=%d (hint=%d)\n",
++                p->format, p->codec_samplerate, ao->samplerate, hint);
      } else if (ao->format == AF_FORMAT_U8) {
          p->format = AudioFormat.ENCODING_PCM_8BIT;
      } else if (p->cfg_pcm_float && af_fmt_is_float(ao->format)) {
-@@ -701,7 +756,11 @@
+@@ -701,7 +787,11 @@
              ao->samplerate = MPMIN(samplerate, ao->samplerate);
          }
      }
@@ -111,7 +175,7 @@
  
      /* https://developer.android.com/reference/android/media/AudioFormat#channelPositionMask */
      static const struct mp_chmap layouts[] = {
-@@ -727,11 +786,10 @@
+@@ -727,11 +817,10 @@
          AudioFormat.CHANNEL_OUT_7POINT1_SURROUND,
      };
      static_assert(MP_ARRAY_SIZE(layout_map) == MP_ARRAY_SIZE(layouts), "");
@@ -126,7 +190,7 @@
      } else {
          struct mp_chmap_sel sel = {0};
          for (int i = 0; i < MP_ARRAY_SIZE(layouts); i++) {
-@@ -752,8 +810,17 @@
+@@ -752,8 +841,17 @@
          p->format
      );
      if (MP_JNI_EXCEPTION_LOG(ao) < 0 || buffer_size <= 0) {
@@ -146,7 +210,7 @@
      }
  
      // Choose double of the minimum buffer size suggested by the driver, but not
-@@ -764,6 +831,7 @@
+@@ -764,6 +862,7 @@
      min = MP_ALIGN_UP(min, bps);
      max = MP_ALIGN_UP(max, bps);
      p->size = MPCLAMP(buffer_size * 2, min, max);
@@ -169,7 +233,23 @@
      struct mp_aframe_pool *pool;
  
      struct mp_decoder public;
-@@ -235,6 +241,67 @@
+@@ -214,6 +220,15 @@
+         return false;
+     }
+ }
++
++// Real sample rate of the codec currently being passed through directly
++// (e.g. 48000 for E-AC-3), 0 when no direct passthrough is active.
++//
++// The AO interface carries no codec parameters, and the frame rate is
++// repurposed as a byte accounting rate (bitrate/8/sstride) for mpv's clock, so
++// the AudioTrack driver could not otherwise learn the rate it must hand to
++// AudioFormat.Builder.setSampleRate().
++int mp_direct_passthrough_codec_rate = 0;
+ 
+ static int init_filter(struct mp_filter *da)
+ {
+@@ -235,6 +250,74 @@
  
      int profile = spdif_ctx->codec_profile;
      int c_rate = spdif_ctx->codec_rate;
@@ -228,16 +308,23 @@
 +            spdif_ctx->sstride = mp_aframe_get_sstride(spdif_ctx->fmt);
 +            spdif_ctx->need_close = false;
 +            spdif_ctx->direct_passthrough = true;
++            // The AO cannot see the codec parameters, and the frame rate above
++            // is going to be replaced with the byte accounting rate, so publish
++            // the codec's real sample rate here (see mp_direct_passthrough_codec_rate above).
++            mp_direct_passthrough_codec_rate = raw_rate;
 +
-+            MP_INFO(da, "direct passthrough: format=%d sstride=%d (rate pending)\n",
-+                    raw_format, spdif_ctx->sstride);
++            MP_INFO(da, "direct passthrough: format=%d sstride=%d codec_rate=%d "
++                        "(accounting rate pending)\n",
++                    raw_format, spdif_ctx->sstride, raw_rate);
 +            return 0;
 +        }
 +    }
++
++    mp_direct_passthrough_codec_rate = 0;
  
      AVFormatContext *lavf_ctx  = avformat_alloc_context();
      if (!lavf_ctx)
-@@ -380,7 +447,7 @@
+@@ -380,7 +463,7 @@
      }
      mp_set_av_packet(spdif_ctx->avpkt, mpkt, NULL);
      spdif_ctx->avpkt->pts = spdif_ctx->avpkt->dts = 0;
@@ -246,7 +333,7 @@
          // A fresh TrueHD spdif muxer needs a major sync to initialize its
          // stream parameters, so wait for major sync before initializing.
          if (spdif_ctx->codec_id == AV_CODEC_ID_TRUEHD &&
-@@ -400,7 +467,98 @@
+@@ -400,7 +483,98 @@
          if (init_filter(da) < 0)
              goto done;
          mp_assert(spdif_ctx->avpkt);
