@@ -197,12 +197,25 @@ class MPVView(
       MPVLib.setOptionString("demuxer-max-back-bytes", "${cacheMegs * 1024 * 1024}")
     }
 
-    val logLevel = if (advancedPreferences.verboseLogging.get()) "v" else "warn"
+    // Verbose logging is opt-in (Settings > Advanced > Verbose logging). When it is on we also
+    // mirror mpv's log to internal storage so it can be pulled off the device after a playback
+    // problem; nothing rotates that file, so it is truncated once a previous session left it
+    // above 32 MiB (an earlier diagnostic build let it reach ~900 MB).
+    val verboseLogging = advancedPreferences.verboseLogging.get()
+    val logLevel = if (verboseLogging) "v" else "warn"
     MPVLib.setOptionString("msg-level", "all=$logLevel")
-    // TEMP DIAG: dump full mpv log to /sdcard/mpv/mpv.log to confirm the passthrough/VO
-    // black-screen root cause. Remove this block after diagnosis.
-    MPVLib.setOptionString("log-file", "/sdcard/mpv/mpv.log")
-    MPVLib.setOptionString("msg-level", "all=info")
+    if (verboseLogging) {
+      val logFile = java.io.File("/sdcard/mpv/mpv.log")
+      runCatching {
+        logFile.parentFile?.mkdirs()
+        if (logFile.length() > 32L * 1024 * 1024) {
+          if (!logFile.delete()) logFile.writeText("")
+        }
+      }
+      MPVLib.setOptionString("log-file", logFile.path)
+      // mpv keeps some modules quiet at "v"; info is what makes the AO/VO decisions visible.
+      MPVLib.setOptionString("msg-level", "all=info")
+    }
 
     MPVLib.setPropertyBoolean("keep-open", true)
     MPVLib.setPropertyBoolean("input-default-bindings", true)
