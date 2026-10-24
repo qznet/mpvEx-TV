@@ -835,6 +835,19 @@ class PlayerActivity :
     // Enter PIP mode when user presses home button if auto PIP is enabled
     if (playerPreferences.autoPiPOnNavigation.get() && isReady && !isFinishing) {
       pipHelper.enterPipMode()
+      return
+    }
+    // Aggressive memory cleanup: once the app loses the foreground and is NOT actively
+    // doing background playback, tear down the media foreground service immediately.
+    // This is what onTaskRemoved() could not cover — pressing Home keeps the task alive,
+    // so the foreground service (notification + MediaSession) lingered and held memory.
+    // With the TV's "background_process_limit=0" setting the now-cached process is then
+    // reclaimed by the OS, returning the device to a freshly-booted state.
+    val allowBg = isManualBackgroundPlayback || audioPreferences.automaticBackgroundPlayback.get()
+    val isPlaying = runCatching { MPVLib.getPropertyBoolean("pause") != true }.getOrDefault(false)
+    if (isReady && (!isPlaying || !allowBg)) {
+      Log.d(TAG, "onUserLeaveHint: leaving without active background playback -> stopping media service (isPlaying=$isPlaying, allowBg=$allowBg)")
+      endBackgroundPlayback()
     }
   }
 
