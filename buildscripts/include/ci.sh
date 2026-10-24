@@ -144,6 +144,27 @@ elif [ "$1" = "install" ]; then
 		git clone --depth 1 "$MPV_GIT_URL" deps/mpv
 	fi
 
+	# Apply direct-passthrough (non-IEC61937) kernel overlay. HDMI-ARC TVs whose
+	# HAL rejects ENCODING_IEC61937 still accept the direct bitstream encodings
+	# (ENCODING_E_AC3/AC3/DTS/DTS_HD/TRUEHD). The kernel stays pinned at
+	# MPV_GIT_COMMIT; this patch only rewrites the spdif passthrough audio path.
+	#
+	# NOTE: a missing patch or a failed `git apply` must abort the build. When
+	# this was a soft warning the overlay was silently skipped and the APK was
+	# built from the pristine kernel, which looked exactly like "the fix had no
+	# effect" on the device.
+	OVERLAY_PATCH="$(pwd)/../buildscripts/kernel-overlay/audiotrack-direct-passthrough.patch"
+	if [ ! -f "$OVERLAY_PATCH" ]; then
+		echo "[error] kernel overlay patch not found: $OVERLAY_PATCH" >&2
+		exit 1
+	fi
+	if ! git -C deps/mpv apply -p1 "$OVERLAY_PATCH"; then
+		echo "[error] kernel direct-passthrough patch failed to apply" >&2
+		exit 1
+	fi
+	echo "[ok] applied kernel overlay: $OVERLAY_PATCH"
+	git -C deps/mpv diff --stat
+
 	msg "Trying to fetch existing prefix"
 	mkdir -p prefix
 	fetch_prefix || build_prefix

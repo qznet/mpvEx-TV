@@ -2,9 +2,17 @@ name: Build APK
 
 on:
   push:
-    branches: [main, master, fongmi-kernel]
+    branches: [main, master, fongmi-kernel, fongmi-kernel-passthrough]
+    # Official releases: pushing a v* tag is the only branch-free way to get the
+    # full ABI set plus a GitHub Release.
+    tags: ['v*']
   workflow_dispatch:
-    branches: [fongmi-kernel]
+    branches: [fongmi-kernel, fongmi-kernel-passthrough]
+    inputs:
+      full:
+        description: 'Build arm64-v8a too and create a GitHub Release (leave unchecked for a v7a test build)'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -28,12 +36,12 @@ jobs:
       # rendering on the user's device. ci.sh honors MPV_GIT_COMMIT over
       # MPV_GIT_REF.
       MPV_GIT_COMMIT: f68eb0a6996d727d0184d8f47dd15f5a95004692
-      # On push (auto): build v7a only — fast CI for device sideload.
-      # On workflow_dispatch (manual): build full v8a + v7a.
-      MPV_APK_ABIS: ${{ github.event_name == 'workflow_dispatch' && 'armeabi-v7a,arm64-v8a' || 'armeabi-v7a' }}
-      # On push: only armv7l to save CI time.
-      # On workflow_dispatch: build both armv7l + arm64.
-      MPV_ANDROID_ARCHES: ${{ github.event_name == 'workflow_dispatch' && 'armv7l arm64' || 'armv7l' }}
+      # ABI matrix policy (2026-10-24): day-to-day test builds ship armeabi-v7a
+      # ONLY, because the TV is 32-bit and a second ABI doubles the native
+      # build time. The full set (v7a + arm64) is produced only when explicitly
+      # asked for: workflow_dispatch with inputs.full checked, or a v* tag push.
+      MPV_APK_ABIS: ${{ ((github.event_name == 'workflow_dispatch' && inputs.full) || startsWith(github.ref, 'refs/tags/v')) && 'armeabi-v7a,arm64-v8a' || 'armeabi-v7a' }}
+      MPV_ANDROID_ARCHES: ${{ ((github.event_name == 'workflow_dispatch' && inputs.full) || startsWith(github.ref, 'refs/tags/v')) && 'armv7l arm64' || 'armv7l' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -153,7 +161,7 @@ jobs:
           path: app/build/outputs/apk/default/release/*.apk
 
       - name: Create GitHub Release (v7a + v8a)
-        if: github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'workflow_dispatch' && inputs.full) || startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -165,7 +173,7 @@ jobs:
             --title "mpvExTV ${VERSION} (FongMi kernel) build ${{ github.run_number }}" \
             --notes "Source-built FongMi/mpv kernel (fongmi branch), armeabi-v7a + arm64-v8a. Built from $(git rev-parse --short HEAD)."
 
-      - name: Skip release on push (manual Run workflow required)
-        if: github.event_name != 'workflow_dispatch'
+      - name: Skip release (v7a test build)
+        if: ${{ !((github.event_name == 'workflow_dispatch' && inputs.full) || startsWith(github.ref, 'refs/tags/v')) }}
         run: |
-          echo "Push-triggered build: artifacts uploaded, no release. Use Actions > Run workflow for a release."
+          echo "Test build: armeabi-v7a artifact only, no release. Tick 'full' on Run workflow (or push a v* tag) for the complete set."
