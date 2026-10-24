@@ -1,6 +1,6 @@
 --- a/audio/out/ao_audiotrack.c
 +++ b/audio/out/ao_audiotrack.c
-@@ -64,12 +64,53 @@
+@@ -64,12 +64,55 @@
      bool cfg_pcm_float;
      int cfg_session_id;
  
@@ -11,16 +11,18 @@
 +    int codec_samplerate;
 +    // Rate limit for the periodic latency accounting log.
 +    int64_t latency_log_ts;
-+    // Byte rate actually observed on the wire, measured over 3 s windows. The
-+    // nominal bitrate is not accurate enough for a VBR E-AC-3 stream.
-+    double measured_byte_rate;
-+    int64_t cal_ts;
-+    uint32_t cal_written;
-+    double cal_played;
-+    // Counters at the first sample after a (re)start, so the platform position
-+    // and our write counter share an origin.
-+    uint32_t anchor_written;
-+    double anchor_played;
++    // Audio bytes still in flight (device buffer + HAL decoder pipeline),
++    // maintained INCREMENTALLY: += bytes written, -= seconds played * rate_est.
++    // It is never recomputed from a global origin, so a change of rate_est
++    // cannot retroactively shift it and jerk the audio clock.
++    double q_bytes;
++    // Real content byte rate. Seeded with the nominal bitrate/8 (accurate for
++    // CBR; VBR only needs a slow nudge) and updated in <=1% steps.
++    double rate_est;
++    uint32_t q_playhead;   /* platform position already accounted for */
++    int64_t rq_ts;         /* window start for the rate re-estimate */
++    uint32_t rq_written;
++    uint32_t rq_playhead;
 +
      bool thread_terminate;
      bool thread_created;
@@ -54,7 +56,7 @@
  
  static struct JNIByteBuffer {
      jclass clazz;
-@@ -191,6 +232,11 @@
+@@ -191,6 +234,11 @@
      jint ENCODING_PCM_16BIT;
      jint ENCODING_PCM_FLOAT;
      jint ENCODING_IEC61937;
@@ -66,7 +68,7 @@
      jint CHANNEL_OUT_MONO;
      jint CHANNEL_OUT_STEREO;
      jint CHANNEL_OUT_FRONT_CENTER;
-@@ -206,6 +252,11 @@
+@@ -206,6 +254,11 @@
      {"ENCODING_PCM_16BIT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_16BIT), 1},
      {"ENCODING_PCM_FLOAT", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_PCM_FLOAT), 1},
      {"ENCODING_IEC61937", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(ENCODING_IEC61937), 0},
@@ -78,7 +80,7 @@
      {"CHANNEL_OUT_MONO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_MONO), 1},
      {"CHANNEL_OUT_STEREO", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_STEREO), 1},
      {"CHANNEL_OUT_FRONT_CENTER", "I", MP_JNI_STATIC_FIELD_AS_INT, OFFSET(CHANNEL_OUT_FRONT_CENTER), 1},
-@@ -373,7 +424,12 @@
+@@ -373,7 +426,12 @@
          int bufferSize = MP_JNI_CALL_INT(audiotrack, AudioTrack.getBufferSizeInFramesV23);
          if (bufferSize > 0) {
              MP_VERBOSE(ao, "AudioTrack.getBufferSizeInFrames = %d\n", bufferSize);
@@ -92,7 +94,7 @@
          }
      }
  
-@@ -409,7 +465,7 @@
+@@ -409,7 +467,7 @@
      int stable_count = 20;
      int64_t wait = p->timestamp_stable < stable_count ? 50000000 : 3000000000;
  
@@ -101,7 +103,7 @@
          (p->timestamp_fetched == 0 || now - p->timestamp_fetched >= wait)) {
          if (!p->timestamp_fetched)
              p->timestamp_stable = 0;
-@@ -449,7 +505,7 @@
+@@ -449,7 +507,7 @@
      }
  
  
@@ -110,16 +112,17 @@
          if (p->reset_pending) {
              // after a flush(), playbackHeadPosition will not reset to 0 right away.
              // sometimes, it will never reset at all.
-@@ -475,6 +531,8 @@
+@@ -475,6 +533,9 @@
              p->playhead_offset = 0;
              p->playhead_pos = 0;
              p->written_frames = 0;
-+            p->cal_ts = 0;
-+            p->measured_byte_rate = 0;
++            p->q_bytes = 0;
++            p->rq_ts = 0;
++            p->rate_est = 0;
          }
      }
  
-@@ -489,11 +547,48 @@
+@@ -489,11 +550,76 @@
      if (!p->audiotrack)
          return 0;
  
@@ -130,30 +133,59 @@
 +    const int frame_bytes = af_fmt_to_bytes(ao->format) * ao->channels.num;
 +    double delay;
 +    if (p->compressed_passthrough) {
-+        double played_s = raw_playhead / (double)p->codec_samplerate;
 +        int64_t now = mp_time_ns();
-+        if (!p->cal_ts) {
-+            p->cal_ts = now;
-+            p->cal_written = p->written_frames;
-+            p->cal_played = played_s;
-+            p->anchor_written = p->written_frames;
-+            p->anchor_played = played_s;
-+        } else if (now - p->cal_ts >= MP_TIME_S_TO_NS(3)) {
-+            double dplayed = played_s - p->cal_played;
-+            uint32_t dwritten = p->written_frames - p->cal_written;
-+            if (dplayed >= 1.0 && dwritten > 0) {
-+                p->measured_byte_rate = (double)dwritten * frame_bytes / dplayed;
-+                p->cal_ts = now;
-+                p->cal_written = p->written_frames;
-+                p->cal_played = played_s;
-+            }
++        if (!(p->rate_est > 1000))
++            p->rate_est = ao->bps;
++        if (!p->rq_ts) {
++            // First sample after a (re)start: the write counter and the platform
++            // position share their origin here, so the amount of audio already
++            // in flight can be seeded directly. From now on it is only ever
++            // updated incrementally, never recomputed.
++            p->q_bytes = (double)p->written_frames * frame_bytes -
++                         (raw_playhead / (double)p->codec_samplerate) * p->rate_est;
++            p->q_playhead = raw_playhead;
++            p->rq_ts = now;
++            p->rq_written = p->written_frames;
++            p->rq_playhead = raw_playhead;
 +        }
-+        double byte_rate = p->measured_byte_rate > 1000 ? p->measured_byte_rate
-+                                                       : (double)ao->bps;
-+        double written_s = (double)(p->written_frames - p->anchor_written) *
-+                           frame_bytes / byte_rate;
-+        double played_rel = played_s - p->anchor_played;
-+        delay = MPCLAMP(written_s - played_rel, 0.0, 1.0);
++        // A compressed track lands on an AudioFlinger OFFLOAD thread, so the
++        // platform counts CODEC samples (48000/s for E-AC-3) -- neither bytes
++        // nor mpv accounting frames. Drain the byte queue by that much audio.
++        int32_t dph = (int32_t)(raw_playhead - p->q_playhead);
++        if (dph > 0) {
++            p->q_bytes -= (dph / (double)p->codec_samplerate) * p->rate_est;
++            p->q_playhead = raw_playhead;
++        } else if (dph < 0) {
++            p->q_playhead = raw_playhead; /* track restarted underneath us */
++            p->q_bytes = 0;
++        }
++        p->q_bytes = MPCLAMP(p->q_bytes, 0.0, 3.0 * p->rate_est);
++        // Re-estimate the real byte rate over a long window and nudge it in
++        // small steps. Only FUTURE increments use the new value: rescaling the
++        // accumulated queue with a fresh rate is what used to jerk the reported
++        // latency between 0 and a full second -- and the audio clock with it,
++        // which is exactly the residual stutter at 1.0x.
++        if (now - p->rq_ts >= MP_TIME_S_TO_NS(10)) {
++            double dplayed = (int32_t)(raw_playhead - p->rq_playhead) /
++                             (double)p->codec_samplerate;
++            uint32_t dwritten = p->written_frames - p->rq_written;
++            if (dplayed >= 8.0 && dwritten > 0) {
++                double r = dwritten * frame_bytes / dplayed;
++                // Wide net: only reject windows that are obviously polluted by a
++                // refill or a stall, so unusual codecs/bitrates still converge.
++                if (r > 0.6 * ao->bps && r < 1.4 * ao->bps)
++                    p->rate_est += MPCLAMP(r - p->rate_est,
++                                           -0.01 * p->rate_est,
++                                            0.01 * p->rate_est);
++            }
++            // Hard bound: each window only ever freezes the current queue, so
++            // nothing would stop a biased estimate from creeping forever.
++            p->rate_est = MPCLAMP(p->rate_est, 0.95 * ao->bps, 1.05 * ao->bps);
++            p->rq_ts = now;
++            p->rq_written = p->written_frames;
++            p->rq_playhead = raw_playhead;
++        }
++        delay = p->q_bytes / p->rate_est;
 +    } else {
 +        uint32_t diff = p->written_frames > raw_playhead
 +                            ? p->written_frames - raw_playhead : 0;
@@ -161,10 +193,9 @@
 +    }
 +    if (mp_time_ns() - p->latency_log_ts >= MP_TIME_S_TO_NS(1)) {
 +        p->latency_log_ts = mp_time_ns();
-+        MP_INFO(ao, "latency: written=%u playhead=%u rate=%.0f delay=%.3f\n",
-+                p->written_frames, raw_playhead,
-+                p->measured_byte_rate > 1000 ? p->measured_byte_rate
-+                                             : (double)ao->bps, delay);
++        MP_INFO(ao, "latency: q=%.0fB written=%u playhead=%u rate=%.0f delay=%.3f\n",
++                p->q_bytes, p->written_frames, raw_playhead,
++                p->compressed_passthrough ? p->rate_est : (double)ao->bps, delay);
 +    }
      if (!p->timestamp_set &&
 -        p->format != AudioFormat.ENCODING_IEC61937)
@@ -172,7 +203,16 @@
          delay += (double)MP_JNI_CALL_INT(p->audiotrack, AudioTrack.getLatency)/1000.0;
      if (delay > 2.0) {
          //MP_WARN(ao, "getLatency: written=%u playhead=%u diff=%u delay=%f\n", p->written_frames, playhead, diff, delay);
-@@ -661,6 +756,20 @@
+@@ -604,6 +730,8 @@
+             int ret = AudioTrack_write(ao, samples * ao->sstride);
+             if (ret >= 0) {
+                 p->written_frames += ret / ao->sstride;
++                if (p->compressed_passthrough)
++                    p->q_bytes += ret;
+             } else if (ret == AudioManager.ERROR_DEAD_OBJECT) {
+                 MP_WARN(ao, "AudioTrack.write failed with ERROR_DEAD_OBJECT. Recreating AudioTrack...\n");
+                 if (AudioTrack_Recreate(ao) < 0) {
+@@ -661,6 +789,20 @@
      uninit_jni(ao);
  }
  
@@ -193,7 +233,7 @@
  static int init(struct ao *ao)
  {
      struct priv *p = ao->priv;
-@@ -675,11 +784,44 @@
+@@ -675,11 +817,48 @@
          return -1;
  
      if (af_fmt_is_spdif(ao->format)) {
@@ -227,6 +267,10 @@
 +        // rejects ("AudioTrack.getState failed"), sending every video back to
 +        // decoded PCM (stereo). ad_spdif publishes the real codec rate.
 +        p->compressed_passthrough = true;
++        // Seed the queue model with the nominal content byte rate. It only ever
++        // gets nudged by <=1% steps from the measured value, so every codec
++        // (AC-3 640k, E-AC-3 384k, DTS 1536k, ...) starts from a sane figure.
++        p->rate_est = ao->bps;
 +        int hint = mp_direct_passthrough_codec_rate;
 +        if (hint >= 8000 && hint <= 768000) {
 +            p->codec_samplerate = hint;
@@ -241,7 +285,7 @@
      } else if (ao->format == AF_FORMAT_U8) {
          p->format = AudioFormat.ENCODING_PCM_8BIT;
      } else if (p->cfg_pcm_float && af_fmt_is_float(ao->format)) {
-@@ -701,7 +843,11 @@
+@@ -701,7 +880,11 @@
              ao->samplerate = MPMIN(samplerate, ao->samplerate);
          }
      }
@@ -254,7 +298,7 @@
  
      /* https://developer.android.com/reference/android/media/AudioFormat#channelPositionMask */
      static const struct mp_chmap layouts[] = {
-@@ -727,11 +873,10 @@
+@@ -727,11 +910,10 @@
          AudioFormat.CHANNEL_OUT_7POINT1_SURROUND,
      };
      static_assert(MP_ARRAY_SIZE(layout_map) == MP_ARRAY_SIZE(layouts), "");
@@ -269,7 +313,7 @@
      } else {
          struct mp_chmap_sel sel = {0};
          for (int i = 0; i < MP_ARRAY_SIZE(layouts); i++) {
-@@ -752,23 +897,44 @@
+@@ -752,23 +934,44 @@
          p->format
      );
      if (MP_JNI_EXCEPTION_LOG(ao) < 0 || buffer_size <= 0) {
@@ -320,12 +364,13 @@
      p->chunk = talloc_size(ao, p->size);
  
      jobject timestamp = MP_JNI_NEW(AudioTimestamp.clazz, AudioTimestamp.ctor);
-@@ -835,6 +1001,8 @@
+@@ -835,6 +1038,9 @@
      p->playhead_offset = 0;
      p->reset_pending = true;
      p->written_frames = 0;
-+    p->cal_ts = 0;
-+    p->measured_byte_rate = 0;
++    p->q_bytes = 0;
++    p->rq_ts = 0;
++    p->rate_est = 0;
      p->timestamp_fetched = 0;
      p->timestamp_set = false;
  }
