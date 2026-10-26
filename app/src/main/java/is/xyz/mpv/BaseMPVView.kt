@@ -129,7 +129,7 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
             MPVLib.setOptionString("force-window", "yes")
             reopenVo()
             recoverVideoTrackIfMissing()
-            if (MPVLib.getPropertyInt("video-params/w") != null) {
+            if (isVideoOutputUp()) {
                 Log.i(TAG, "video output up after ${retry + 1} attempt(s)")
                 voEnsureActive = false
             } else if (retry < VO_RECOVER_MAX) {
@@ -148,8 +148,22 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
      * open. Call this a moment after a file is loaded (or after playback resumes).
      */
     fun recoverVideoOutputIfNeeded() {
-        if (MPVLib.getPropertyInt("video-params/w") != null) return
+        if (isVideoOutputUp()) return
         ensureVideoOutput(0)
+    }
+
+    /**
+     * Whether the picture can actually be seen.
+     *
+     * A live decoder is NOT enough. After the VO is torn down (vo="null") mpv keeps decoding
+     * into the null output, so video-params/w stays set while the screen stays black with audio
+     * playing. Only the vo property tells "picture is up" apart from "decoder is running".
+     */
+    private fun isVideoOutputUp(): Boolean {
+        val currentVo = runCatching { MPVLib.getPropertyString("vo") }.getOrNull()
+        if (currentVo.isNullOrBlank() || currentVo == "null") return false
+        if (voInUse.isNotBlank() && currentVo != voInUse) return false
+        return runCatching { MPVLib.getPropertyInt("video-params/w") }.getOrNull() != null
     }
 
     /**
