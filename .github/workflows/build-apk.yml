@@ -70,8 +70,13 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
+      # Git Data API pushes (push_files.py) cannot carry an executable bit, so
+      # re-assert +x on gradlew and every buildscripts/*.sh here. Belt-and-
+      # suspenders: ci.sh calls ./include/download-deps.sh, which must be +x.
       - name: Grant execute permission for gradlew
-        run: chmod +x gradlew buildscripts/include/ci.sh buildscripts/buildall.sh buildscripts/download.sh
+        run: |
+          chmod +x gradlew
+          find buildscripts -name '*.sh' -exec chmod +x {} +
 
       - name: Build native libraries (FongMi/mpv kernel)
         run: |
