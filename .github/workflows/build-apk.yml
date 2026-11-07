@@ -16,7 +16,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     permissions:
@@ -102,7 +102,9 @@ jobs:
               # ci.sh cd's into buildscripts/, so the real paths are under
               # buildscripts/ — NOT repo-root deps/mpv / prefix (that cleanup
               # was a no-op and made every retry die on "already exists").
-              rm -rf buildscripts/deps/mpv buildscripts/prefix
+              # NOTE: wipe the WHOLE deps/ tree, not just deps/mpv — a poisoned
+              # uchardet (or any other) tarball download must not survive a retry.
+              rm -rf buildscripts/deps buildscripts/prefix
               # ci.sh's "ln -sv $ANDROID_HOME sdk/android-sdk-linux" is not
               # idempotent: when the target dir already exists, ln drops a
               # nested self-link inside it. Remove artifacts so retries work.
@@ -120,8 +122,9 @@ jobs:
             fi
             echo "[warn] build attempt $i failed; cleaning partial state and retrying in 15s..."
             # A failed build (e.g. missing libiconv) must also wipe the partial
-            # prefix/deps so the next attempt re-extracts cleanly.
-            rm -rf buildscripts/deps/mpv buildscripts/prefix
+            # prefix/deps so the next attempt re-extracts cleanly. Wipe the WHOLE
+            # deps/ tree so a poisoned dependency download cannot survive a retry.
+            rm -rf buildscripts/deps buildscripts/prefix
             rm -f buildscripts/sdk/android-sdk-linux/android-sdk-linux
             sleep 15
           done
