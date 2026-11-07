@@ -150,16 +150,16 @@ if [ ! -d libiconv ]; then
 fi
 
 # uchardet
-# NOTE: source moved off gitlab.freedesktop.org (unreliable behind CI/proxy: a
-# half-downloaded/HTML error page produces a tarball with no CMakeLists.txt and
-# silently poisons the build). Use the GitHub archive instead, download to a file,
-# validate it is a real gzip, and retry so a transient failure cannot poison the
-# deps dir across the CI install-retry loop.
+# NOTE: uchardet's canonical source IS gitlab.freedesktop.org (no GitHub mirror
+# exists at all). gitlab occasionally serves a half-downloaded/HTML error page
+# that yields a tarball with no CMakeLists.txt and silently poisons the deps dir,
+# so we download to a file, validate it is a real gzip, and retry so a transient
+# failure cannot poison the build across the CI install-retry loop.
 if [ ! -d uchardet ] || [ ! -f uchardet/CMakeLists.txt ]; then
 	rm -rf uchardet
 	mkdir uchardet
 	for ua_attempt in 1 2 3; do
-		$WGET "https://github.com/uchardet/uchardet/archive/v${v_uchardet}.tar.gz" -O /tmp/uchardet.tar.gz
+		$WGET "https://gitlab.freedesktop.org/uchardet/uchardet/-/archive/v${v_uchardet}/uchardet-v${v_uchardet}.tar.gz" -O /tmp/uchardet.tar.gz
 		if gzip -t /tmp/uchardet.tar.gz 2>/dev/null; then
 			tar -xz -C uchardet --strip-components=1 -f /tmp/uchardet.tar.gz
 			if [ -f uchardet/CMakeLists.txt ]; then
