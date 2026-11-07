@@ -69,6 +69,33 @@ class AudioPreferences(
     return PASSTHROUGH_FORMATS
   }
 
+  /**
+   * Builds the mpv `af` (audio filter) chain string from the current preferences.
+   *
+   * Composes, in order:
+   *  - `dynaudnorm` when volume normalization is enabled;
+   *  - a `pan` filter for the channel layout:
+   *    - [AudioChannels.ReverseStereo] swaps L/R (and, when [includeLfeFold] is set, also folds the
+   *      LFE into both channels so the subwoofer track is not lost);
+   *    - otherwise, when [includeLfeFold] is set, a 5.1/7.1 -> stereo downmix that KEEPS the LFE
+   *      energy. mpv's default downmix silently discards the `.1` LFE channel.
+   *
+   * [includeLfeFold] must be true only while audio is actually decoded to PCM (i.e.
+   * `effectivePassthroughSpdif(speed).isBlank()`): in bitstream-passthrough mode the compressed
+   * stream bypasses `af` and the AVR keeps the discrete LFE anyway.
+   */
+  fun buildAudioFilterChain(includeLfeFold: Boolean): String {
+    val parts = mutableListOf<String>()
+    if (volumeNormalization.get()) parts += "dynaudnorm"
+    when (audioChannels.get()) {
+      AudioChannels.ReverseStereo -> {
+        parts += if (includeLfeFold) LFE_FOLD_PAN_REVERSE else "pan=[stereo|c0=c1|c1=c0]"
+      }
+      else -> if (includeLfeFold) parts += LFE_FOLD_PAN
+    }
+    return parts.joinToString(",")
+  }
+
   companion object {
     /**
      * Compressed bitstream formats offered for HDMI passthrough. mpv sends these untouched to the
@@ -76,6 +103,19 @@ class AudioPreferences(
      * mpv's normal decoder + the OS audio mix, so it does not need to be listed here.
      */
     const val PASSTHROUGH_FORMATS = "ac3,eac3,dts,truehd,dts-hd"
+
+    /**
+     * 5.1/7.1 -> stereo downmix that PRESERVES the LFE (.1) channel by folding it equally into both
+     * outputs (LFE is omnidirectional, so adding it to L and R is correct). Without this, mpv's
+     * default downmix silently drops the subwoofer track. Coefficients follow the standard AC3
+     * stereo downmix (center/surround at 0.707, LFE at 0.5 ~= -6 dB) to avoid over-boosting.
+     */
+    private const val LFE_FOLD_PAN =
+      "pan=[stereo|c0=FL+0.707*FC+0.707*BL+0.707*SL+0.5*LFE|c1=FR+0.707*FC+0.707*BR+0.707*SR+0.5*LFE]"
+
+    /** Same as [LFE_FOLD_PAN] but with left/right swapped for ReverseStereo. */
+    private const val LFE_FOLD_PAN_REVERSE =
+      "pan=[stereo|c0=FR+0.707*FC+0.707*BR+0.707*SR+0.5*LFE|c1=FL+0.707*FC+0.707*BL+0.707*SL+0.5*LFE]"
   }
 }
 

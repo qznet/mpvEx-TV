@@ -779,13 +779,23 @@ class PlayerActivity :
   }
 
   private fun setupAudio() {
-    audioPreferences.audioChannels.get().let {
-      runCatching {
-        MPVLib.setPropertyString(it.property, it.value)
-      }.onFailure { e ->
-        Log.e(TAG, "Error setting audio channels: ${it.property}=${it.value}", e)
-      }
+    // Channel layout: Auto/Stereo/Mono/AutoSafe write `audio-channels`; ReverseStereo is handled by
+    // the pan filter inside the af chain built below, so it has no audio-channels value of its own.
+    val ch = audioPreferences.audioChannels.get()
+    if (ch.property == "audio-channels") {
+      runCatching { MPVLib.setPropertyString("audio-channels", ch.value) }
+        .onFailure { e -> Log.e(TAG, "Error setting audio channels: ${ch.property}=${ch.value}", e) }
     }
+    // Compose the full audio filter chain (dynaudnorm + reverse/LFE pans) in one place so the
+    // pieces never clobber each other — previously ReverseStereo's `af=pan` replaced dynaudnorm.
+    runCatching {
+      MPVLib.setPropertyString(
+        "af",
+        audioPreferences.buildAudioFilterChain(
+          audioPreferences.effectivePassthroughSpdif(playerPreferences.defaultSpeed.get().toDouble()).isBlank(),
+        ),
+      )
+    }.onFailure { e -> Log.e(TAG, "Error setting af", e) }
 
     if (!serviceBound) {
       audioFocusRequest =

@@ -349,10 +349,15 @@ class MPVView(
     MPVLib.setOptionString("audio-pitch-correction", audioPreferences.audioPitchCorrection.get().toString())
     MPVLib.setOptionString("volume-max", (audioPreferences.volumeBoostCap.get() + 100).toString())
 
-    // Volume normalization using dynamic audio normalization filter
-    if (audioPreferences.volumeNormalization.get()) {
-      MPVLib.setOptionString("af", "dynaudnorm")
-    }
+    // Audio filter chain: volume normalization + (when in PCM-downmix mode) an LFE-preserving
+    // downmix so the subwoofer track is not silently dropped by mpv's default stereo downmix.
+    // Bitstream passthrough bypasses `af` entirely, so folding is only needed in PCM mode.
+    MPVLib.setOptionString(
+      "af",
+      audioPreferences.buildAudioFilterChain(
+        audioPreferences.effectivePassthroughSpdif(playerPreferences.defaultSpeed.get().toDouble()).isBlank(),
+      ),
+    )
 
     // Audio passthrough (bitstream to AVR) MUST be set during mpv init, BEFORE the AO opens.
     // This is the only timing that makes the AO open in spdif/IEC61937 mode; a runtime change of

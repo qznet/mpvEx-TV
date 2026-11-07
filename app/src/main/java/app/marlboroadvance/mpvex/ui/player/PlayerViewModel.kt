@@ -513,6 +513,11 @@ class PlayerViewModel(
           lastPassthroughSpdif = spdif
           runCatching { MPVLib.setPropertyString("audio-spdif", spdif) }
             .onFailure { Log.e(TAG, "Failed to set audio-spdif to '$spdif'", it) }
+          // Keep the audio filter chain in sync: the LFE fold is only meaningful in PCM-downmix
+          // mode (spdif blank). In bitstream passthrough the compressed stream bypasses `af`.
+          runCatching {
+            MPVLib.setPropertyString("af", audioPreferences.buildAudioFilterChain(spdif.isBlank()))
+          }.onFailure { Log.e(TAG, "Failed to set af", it) }
           reopenAudioOutput()
         }
 
