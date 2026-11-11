@@ -161,6 +161,8 @@
   <string name="pref_player_status_line">Status line</string>
   <string name="pref_player_status_line_enabled">Show status line</string>
   <string name="pref_player_status_line_enabled_summary">One compact line in the top-left corner: memory, cache, bitrate, SMB speed, dropped frames, speed and progress</string>
+  <string name="pref_player_status_line_only_paused">Only while paused</string>
+  <string name="pref_player_status_line_only_paused_summary">Hide the status line during playback; show it only when playback is paused or waiting for the cache</string>
   <string name="pref_player_status_line_font_size">Font size</string>
   <string name="pref_player_status_line_font_size_summary">Text size of the status line</string>
   <string name="pref_player_status_line_refresh">Refresh interval</string>
@@ -176,7 +178,7 @@
   <string name="pref_player_status_line_smb">SMB speed</string>
   <string name="pref_player_status_line_smb_avg">SMB average (10s)</string>
   <string name="pref_player_status_line_smb_min">SMB minimum (10s)</string>
-  <string name="pref_player_status_line_ratio">SMB speed / bitrate</string>
+  <string name="pref_player_status_line_ratio">SMB speed / bitrate (speed-adjusted)</string>
   <string name="pref_player_status_line_drops">Dropped frames</string>
   <string name="pref_player_status_line_fps">Render FPS</string>
   <string name="pref_player_status_line_speed">Playback speed</string>

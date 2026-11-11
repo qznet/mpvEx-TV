@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,23 +44,32 @@ import org.koin.compose.koinInject
  * Two families of numbers are shown and they answer different questions:
  *  - mpv-side state (`cache-*`, drops, fps, speed, progress) — what the player is doing;
  *  - SMB-side throughput ([SmbStats], read at the share itself) — whether bytes are still arriving.
- *    The `ratio` field (SMB rate / source bitrate) is the decisive one: below 1x the cache is
- *    guaranteed to drain, however healthy everything else looks.
+ *    The `ratio` field (SMB rate / source bitrate, scaled by playback speed) is the decisive
+ *    one: below 1x the cache is guaranteed to drain, however healthy everything else looks.
  */
 @Composable
 fun PlayerStatusLine(modifier: Modifier = Modifier) {
   val preferences = koinInject<PlayerPreferences>()
   val enabled by preferences.statusLineEnabled.collectAsState()
+  val onlyWhenPaused by preferences.statusLineOnlyWhenPaused.collectAsState()
   val fontSizeSp by preferences.statusLineFontSizeSp.collectAsState()
   val refreshMs by preferences.statusLineRefreshMs.collectAsState()
   val withBackground by preferences.statusLineBackground.collectAsState()
 
+  // "Only while paused" also counts mpv's cache-pause: the picture is stopped, and that is
+  // precisely the moment when the buffer / ratio numbers are worth looking at.
+  val paused by MPVLib.propBoolean["pause"].collectAsState()
+  val pausedForCache by MPVLib.propBoolean["paused-for-cache"].collectAsState()
+  val visible = !onlyWhenPaused || paused == true || pausedForCache == true
+
   var text by remember { mutableStateOf("") }
   var stalled by remember { mutableStateOf(false) }
 
-  LaunchedEffect(enabled, refreshMs) {
-    if (!enabled) {
+  LaunchedEffect(enabled, visible, refreshMs) {
+    // While hidden there is no reason to keep polling mpv and /proc/meminfo every second.
+    if (!enabled || !visible) {
       text = ""
+      stalled = false
       return@LaunchedEffect
     }
     while (true) {
@@ -70,7 +80,7 @@ fun PlayerStatusLine(modifier: Modifier = Modifier) {
     }
   }
 
-  if (!enabled || text.isEmpty()) return
+  if (!enabled || !visible || text.isEmpty()) return
 
   Text(
     text = text,
@@ -206,7 +216,11 @@ private fun buildStatusLine(preferences: PlayerPreferences): StatusLineBuild {
         } else {
           smb.bytesPerSecond.toDouble()
         }
-      parts.add(String.format(Locale.US, "ratio %.1fx", reference * 8.0 / sourceBitrate))
+      // The source bitrate is the demand at 1.0x. At a faster speed the demuxer must deliver
+      // `bitrate * speed` bytes per real second, so the denominator has to scale as well —
+      // otherwise the line can show a comfortable "ratio 1.2x" while 1.8x playback is starving.
+      val speed = MPVLib.getPropertyDouble("speed")?.takeIf { it > 0.0 } ?: 1.0
+      parts.add(String.format(Locale.US, "ratio %.1fx", reference * 8.0 / (sourceBitrate * speed)))
     }
     if (preferences.statusLineShowRepairs.get()) {
       parts.add("FIX " + smb.repairs)

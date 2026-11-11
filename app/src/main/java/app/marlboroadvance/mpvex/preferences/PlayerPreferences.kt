@@ -252,6 +252,13 @@ class PlayerPreferences(
   /** Master switch for the one-line info overlay drawn in the top-left corner while playing. */
   val statusLineEnabled = preferenceStore.getBoolean("status_line_enabled", true)
 
+  /**
+   * When on, the status line stays hidden during playback and only appears while playback is
+   * paused — either by the user or by mpv waiting for the cache (`paused-for-cache`). The
+   * cache-pause case is exactly when the diagnostic numbers are most useful, so it counts too.
+   */
+  val statusLineOnlyWhenPaused = preferenceStore.getBoolean("status_line_only_when_paused", false)
+
   /** Text size of the status line, in sp. */
   val statusLineFontSizeSp = preferenceStore.getInt("status_line_font_size_sp", 12)
 

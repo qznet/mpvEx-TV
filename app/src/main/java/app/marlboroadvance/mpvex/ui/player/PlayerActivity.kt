@@ -1710,16 +1710,21 @@ class PlayerActivity :
    * Handing mpv's cached buffers back here costs a brief stall while it refills, which
    * is far better than the OS killing us mid-playback — that is what produced the
    * freeze + black screen that could no longer be exited.
+   *
+   * IMPORTANT: only drop the queued buffers, NEVER shrink the demuxer cache caps here.
+   * `demuxer-max-bytes` set at runtime is never restored (initOptions only runs once per
+   * mpv instance), so the old 8 MiB override persisted for the rest of the process. A single
+   * TRIM_MEMORY_RUNNING_CRITICAL callback then left the player with an 8 MiB cache — just
+   * ~1.6 s of a 20 GB 1.8x stream — which surfaced as frequent `cache-pause` stalls. Worse,
+   * a *larger* user cache makes that critical callback more likely, so raising the setting
+   * could paradoxically make stalling worse.
    */
   override fun onTrimMemory(level: Int) {
     super.onTrimMemory(level)
     if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) return
     runCatching {
-      // Shrink the cache caps so mpv trims on the next read...
-      MPVLib.setPropertyString("demuxer-max-bytes", "${8 * 1024 * 1024}")
-      MPVLib.setPropertyString("demuxer-max-back-bytes", "0")
-      // ...and drop the queued audio/video/demuxer buffers to free it right now.
       MPVLib.command("drop-buffers")
+      Log.i(TAG, "onTrimMemory: dropped mpv buffers (level=$level); cache caps left unchanged")
     }.onFailure { e ->
       Log.d(TAG, "onTrimMemory: could not release mpv buffers: ${e.message}")
     }

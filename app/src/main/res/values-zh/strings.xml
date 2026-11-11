@@ -166,6 +166,8 @@
   <string name="pref_player_status_line">播放状态栏</string>
   <string name="pref_player_status_line_enabled">显示状态栏</string>
   <string name="pref_player_status_line_enabled_summary">在左上角显示一行精简信息：内存、缓存、码率、SMB 速率、丢帧、倍速与进度</string>
+  <string name="pref_player_status_line_only_paused">只在暂停播放时显示</string>
+  <string name="pref_player_status_line_only_paused_summary">播放时不显示，仅在暂停播放或等待缓存时显示</string>
   <string name="pref_player_status_line_font_size">字体大小</string>
   <string name="pref_player_status_line_font_size_summary">状态栏文字大小</string>
   <string name="pref_player_status_line_refresh">刷新间隔</string>
@@ -181,7 +183,7 @@
   <string name="pref_player_status_line_smb">SMB 速率</string>
   <string name="pref_player_status_line_smb_avg">SMB 平均值（10 秒）</string>
   <string name="pref_player_status_line_smb_min">SMB 最低值（10 秒）</string>
-  <string name="pref_player_status_line_ratio">SMB 速率 / 码率</string>
+  <string name="pref_player_status_line_ratio">SMB 速率 / 码率（含倍速）</string>
   <string name="pref_player_status_line_drops">丢帧</string>
   <string name="pref_player_status_line_fps">实际帧率</string>
   <string name="pref_player_status_line_speed">播放倍速</string>

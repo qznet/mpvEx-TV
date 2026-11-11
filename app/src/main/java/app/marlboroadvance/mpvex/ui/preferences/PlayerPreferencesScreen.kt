@@ -445,6 +445,22 @@ object PlayerPreferencesScreen : Screen {
 
               PreferenceDivider()
 
+              val statusLineOnlyWhenPaused by preferences.statusLineOnlyWhenPaused.collectAsState()
+              SwitchPreference(
+                value = statusLineOnlyWhenPaused,
+                onValueChange = preferences.statusLineOnlyWhenPaused::set,
+                enabled = statusLineEnabled,
+                title = { Text(stringResource(R.string.pref_player_status_line_only_paused)) },
+                summary = {
+                  Text(
+                    stringResource(R.string.pref_player_status_line_only_paused_summary),
+                    color = MaterialTheme.colorScheme.outline,
+                  )
+                },
+              )
+
+              PreferenceDivider()
+
               val statusLineFontSizeSp by preferences.statusLineFontSizeSp.collectAsState()
               SliderPreference(
                 value = statusLineFontSizeSp.toFloat(),
